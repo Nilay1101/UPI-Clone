@@ -21,7 +21,11 @@ import { ApiError } from './errors.js';
  * getTransactions) is unchanged from the original in-memory version, so the
  * rest of the app and the tests don't care that there's now a database here.
  */
-export function createStore({ dbPath = ':memory:' } = {}) {
+export function createStore({
+  dbPath = ':memory:',
+  maxPinAttempts = 3,
+  lockMs = 15 * 60 * 1000, // 15 minutes
+} = {}) {
   const db = new DatabaseSync(dbPath);
 
   // Better durability + concurrency for file-backed databases.
@@ -35,6 +39,8 @@ export function createStore({ dbPath = ':memory:' } = {}) {
       phone        TEXT,
       balance_paise INTEGER NOT NULL DEFAULT 0,
       pin_hash     TEXT,
+      failed_pin_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until TEXT,
       created_at   TEXT NOT NULL
     );
 
@@ -52,11 +58,14 @@ export function createStore({ dbPath = ':memory:' } = {}) {
     CREATE INDEX IF NOT EXISTS idx_txn_to   ON transactions(to_upi);
   `);
 
-  // Migrate older databases created before PINs existed.
-  const userCols = db.prepare(`PRAGMA table_info(users)`).all();
-  if (!userCols.some((c) => c.name === 'pin_hash')) {
-    db.exec(`ALTER TABLE users ADD COLUMN pin_hash TEXT`);
-  }
+  // Migrate older databases that predate newer columns.
+  const userCols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name);
+  const addColumn = (name, ddl) => {
+    if (!userCols.includes(name)) db.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
+  };
+  addColumn('pin_hash', 'pin_hash TEXT');
+  addColumn('failed_pin_attempts', 'failed_pin_attempts INTEGER NOT NULL DEFAULT 0');
+  addColumn('locked_until', 'locked_until TEXT');
 
   // ---- Row <-> domain-object mappers (DB is snake_case, app is camelCase) ----
   const toUser = (row) =>
@@ -86,7 +95,18 @@ export function createStore({ dbPath = ':memory:' } = {}) {
        VALUES (?, ?, ?, ?, ?, ?)`,
     ),
     getUser: db.prepare(`SELECT * FROM users WHERE upi_id = ?`),
-    getPinHash: db.prepare(`SELECT pin_hash FROM users WHERE upi_id = ?`),
+    getAuth: db.prepare(
+      `SELECT pin_hash, failed_pin_attempts, locked_until FROM users WHERE upi_id = ?`,
+    ),
+    resetPinFailures: db.prepare(
+      `UPDATE users SET failed_pin_attempts = 0, locked_until = NULL WHERE upi_id = ?`,
+    ),
+    setPinAttempts: db.prepare(
+      `UPDATE users SET failed_pin_attempts = ? WHERE upi_id = ?`,
+    ),
+    setPinLock: db.prepare(
+      `UPDATE users SET failed_pin_attempts = ?, locked_until = ? WHERE upi_id = ?`,
+    ),
     debit: db.prepare(
       `UPDATE users SET balance_paise = balance_paise - ? WHERE upi_id = ?`,
     ),
@@ -152,7 +172,56 @@ export function createStore({ dbPath = ':memory:' } = {}) {
   }
 
   /**
-   * Move money from one account to another. Validates everything up front,
+   * Authorise a payment with the payer's PIN, enforcing a lockout after too
+   * many consecutive wrong attempts.
+   *
+   * This runs OUTSIDE the money-movement transaction and commits its own
+   * bookkeeping immediately — otherwise a failed payment would roll back the
+   * very failed-attempt counter the lockout depends on.
+   */
+  function authorizePin(upiId, pin) {
+    const auth = stmts.getAuth.get(upiId);
+    if (!auth.pin_hash) return; // legacy account with no PIN set
+
+    const now = new Date();
+
+    // If a lock is in effect, block regardless of the PIN.
+    if (auth.locked_until) {
+      const until = new Date(auth.locked_until);
+      if (until > now) {
+        const mins = Math.ceil((until - now) / 60000);
+        throw new ApiError(
+          423,
+          `account locked after too many wrong PIN attempts; try again in ${mins} minute(s)`,
+        );
+      }
+      // Lock has expired — start fresh.
+      stmts.resetPinFailures.run(upiId);
+      auth.failed_pin_attempts = 0;
+    }
+
+    if (verifyPin(pin, auth.pin_hash)) {
+      if (auth.failed_pin_attempts) stmts.resetPinFailures.run(upiId);
+      return;
+    }
+
+    // Wrong PIN: record the attempt and possibly lock.
+    const attempts = auth.failed_pin_attempts + 1;
+    if (attempts >= maxPinAttempts) {
+      const lockedUntil = new Date(now.getTime() + lockMs).toISOString();
+      stmts.setPinLock.run(attempts, lockedUntil, upiId);
+      throw new ApiError(
+        423,
+        `too many wrong PIN attempts; account locked for ${Math.round(lockMs / 60000)} minute(s)`,
+      );
+    }
+    stmts.setPinAttempts.run(attempts, upiId);
+    const left = maxPinAttempts - attempts;
+    throw new ApiError(401, `incorrect PIN; ${left} attempt(s) left before lockout`);
+  }
+
+  /**
+   * Move money from one account to another. Validates and authorises up front,
    * then applies the debit, credit and ledger insert inside a single DB
    * transaction so a balance can never be left half-updated.
    */
@@ -164,16 +233,14 @@ export function createStore({ dbPath = ':memory:' } = {}) {
       throw new ApiError(400, 'cannot transfer to the same account');
     }
 
+    // Existence + PIN/lockout checks happen before (and outside) the money
+    // transaction. Their bookkeeping must persist even if the payment fails.
+    requireUser(fromUpiId, 'payer');
+    requireUser(toUpiId, 'payee');
+    authorizePin(fromUpiId, pin);
+
     return inTransaction(() => {
       const payer = requireUser(fromUpiId, 'payer');
-      requireUser(toUpiId, 'payee');
-
-      // Authorise the payment with the payer's PIN.
-      const { pin_hash: pinHash } = stmts.getPinHash.get(fromUpiId);
-      if (pinHash && !verifyPin(pin, pinHash)) {
-        throw new ApiError(401, 'incorrect PIN');
-      }
-
       if (payer.balancePaise < amountPaise) {
         throw new ApiError(422, 'insufficient balance');
       }

@@ -43,7 +43,10 @@ paste a `upi://` link or type a UPI ID + amount instead.
 4. Balances update atomically and both parties see the transaction in history.
 
 PINs are never stored in plaintext — only a salted scrypt hash is kept, and a
-wrong or missing PIN rejects the payment without moving any money.
+wrong or missing PIN rejects the payment without moving any money. After 3
+consecutive wrong PINs the account is **locked for 15 minutes** (payments are
+blocked even with the correct PIN); a correct PIN resets the counter and the
+lock auto-expires.
 
 ## API
 
@@ -59,7 +62,7 @@ wrong or missing PIN rejects the payment without moving any money.
 `pin` is the payer's 4–6 digit payment PIN. Amounts in requests/responses are
 in **rupees**. Errors return `{ "error": "..." }` with an appropriate HTTP
 status (400 bad input, 401 incorrect PIN, 404 unknown user, 422 insufficient
-balance).
+balance, 423 account locked after too many wrong PINs).
 
 ### Example
 
@@ -90,6 +93,7 @@ src/
 test/
   api.test.js         # end-to-end API tests
   persistence.test.js # data survives a restart; failed transfers roll back
+  lockout.test.js     # wrong-PIN lockout: locks, resets, and expires
 public/
   index.html  # web app shell (onboarding, home, receive, pay, history)
   styles.css  # styling
@@ -103,6 +107,5 @@ location with the `DATABASE_PATH` environment variable.
 
 - User login/accounts (session or token auth) instead of entering a UPI ID
 - Request-money / collect flow
-- Rate-limiting / lockout after repeated wrong PINs
 - Idempotency keys + a proper transactions ledger
 - A native mobile app (React Native / Flutter)

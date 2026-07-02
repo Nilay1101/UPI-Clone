@@ -141,6 +141,26 @@ test('payment with a missing PIN is rejected', async () => {
   assert.match(res.body.error, /incorrect PIN/);
 });
 
+test('3 wrong PINs lock the account, blocking even the correct PIN', async () => {
+  const app = makeApp();
+  const a = await createUser(app, 'Payer', 100);
+  const b = await createUser(app, 'Payee', 0);
+  const badPay = () =>
+    request(app).post('/pay').send({ from: a.upiId, to: b.upiId, amount: 10, pin: '9999' });
+
+  await badPay().expect(401);
+  await badPay().expect(401);
+  await badPay().expect(423); // locked on the 3rd wrong attempt
+
+  // Correct PIN is now blocked too.
+  const locked = await request(app)
+    .post('/pay')
+    .send({ from: a.upiId, to: b.upiId, amount: 10, pin: PIN })
+    .expect(423);
+  assert.match(locked.body.error, /locked/);
+  assert.equal((await request(app).get(`/users/${a.upiId}`)).body.balanceRupees, 100);
+});
+
 test('overspending is rejected and leaves balances untouched', async () => {
   const app = makeApp();
   const a = await createUser(app, 'Broke', 10);
