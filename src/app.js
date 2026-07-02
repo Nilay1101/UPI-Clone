@@ -1,7 +1,12 @@
 import express from 'express';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { ApiError } from './errors.js';
 import { rupeesToPaise, paiseToRupees } from './money.js';
 import { buildUpiUri, parseUpiUri, generateQrDataUrl } from './upi.js';
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const PUBLIC_DIR = path.join(__dirname, '..', 'public');
 
 /**
  * Build the Express app around a given store. Taking the store as an argument
@@ -11,6 +16,10 @@ import { buildUpiUri, parseUpiUri, generateQrDataUrl } from './upi.js';
 export function createApp(store) {
   const app = express();
   app.use(express.json());
+
+  // Serve the web front-end (public/index.html etc.). API routes below use
+  // distinct paths, so they take priority over static assets.
+  app.use(express.static(PUBLIC_DIR));
 
   const serializeUser = (u) => ({
     upiId: u.upiId,

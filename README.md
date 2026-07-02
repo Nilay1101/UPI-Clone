@@ -4,8 +4,9 @@ A UPI-style QR-code payment app — a learning/simulation project inspired by
 apps like Google Pay, PhonePe, and Paytm. **No real money or bank integration**:
 balances live in the app and transfers are simulated, so it's safe to hack on.
 
-This repo currently contains the **backend API** (the payment engine). A UI
-(web or mobile) can be added later — it just talks to this API.
+This repo contains the **backend API** (the payment engine) plus a **web
+front-end** served from the same server. Open it in a browser to create a
+wallet, show a payment QR, scan/enter one to pay, and view history.
 
 ## Stack
 
@@ -20,9 +21,13 @@ This repo currently contains the **backend API** (the payment engine). A UI
 ```bash
 npm install
 npm test        # run the test suite
-npm start       # start the API on http://localhost:3000  (PORT env to change)
+npm start       # start the app on http://localhost:3000  (PORT env to change)
 npm run dev     # start with auto-reload
 ```
+
+Then open **http://localhost:3000** in a browser for the web app. Camera QR
+scanning needs `localhost` or HTTPS (a browser requirement); you can always
+paste a `upi://` link or type a UPI ID + amount instead.
 
 ## The core flow (walking skeleton)
 
@@ -74,6 +79,10 @@ src/
   errors.js   # ApiError (carries an HTTP status)
 test/
   api.test.js # end-to-end API tests
+public/
+  index.html  # web app shell (onboarding, home, receive, pay, history)
+  styles.css  # styling
+  app.js      # front-end logic (talks to the API, QR scan via camera)
 ```
 
 ## Roadmap / ideas for next
