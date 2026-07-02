@@ -11,7 +11,8 @@ wallet, show a payment QR, scan/enter one to pay, and view history.
 ## Stack
 
 - **Node.js + Express** HTTP API
-- **In-memory store** (swappable for a real database later)
+- **SQLite** persistence via the built-in `node:sqlite` module (no native
+  dependency; a real database in a single file). Tests use an in-memory DB.
 - Money tracked as integer **paise** internally to avoid floating-point errors
 - **`qrcode`** to render standard `upi://pay` links as scannable QR images
 - Tests via Node's built-in test runner + `supertest`
@@ -73,21 +74,24 @@ curl -s -X POST localhost:3000/pay -H 'content-type: application/json' \
 src/
   server.js   # process entrypoint (starts the HTTP listener)
   app.js      # Express app + routes (built around an injected store)
-  store.js    # in-memory data + the one place money moves
+  store.js    # SQLite data + the one place money moves
   upi.js      # UPI ID generation, upi:// link build/parse, QR rendering
   money.js    # rupee <-> paise helpers
   errors.js   # ApiError (carries an HTTP status)
 test/
-  api.test.js # end-to-end API tests
+  api.test.js         # end-to-end API tests
+  persistence.test.js # data survives a restart; failed transfers roll back
 public/
   index.html  # web app shell (onboarding, home, receive, pay, history)
   styles.css  # styling
   app.js      # front-end logic (talks to the API, QR scan via camera)
 ```
 
+Data is stored at `data/upi.sqlite` by default (git-ignored). Override the
+location with the `DATABASE_PATH` environment variable.
+
 ## Roadmap / ideas for next
 
-- Persist data in a real database (Postgres/SQLite) behind the same store interface
 - Authentication + PIN confirmation for payments
 - Request-money / collect flow
 - A frontend (web with webcam scanning, or a React Native / Flutter mobile app)
