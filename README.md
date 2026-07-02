@@ -19,6 +19,8 @@ wallet, show a payment QR, scan/enter one to pay, and view history.
 
 ## Getting started
 
+Requires **Node.js 22.5+** (for the built-in `node:sqlite` module).
+
 ```bash
 npm install
 npm test        # run the test suite

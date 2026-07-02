@@ -11,7 +11,8 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        node-version: [20.x, 22.x]
+        # Requires Node 22.5+ for the built-in node:sqlite module.
+        node-version: [22.x, 24.x]
     steps:
       - name: Checkout
         uses: actions/checkout@v4
