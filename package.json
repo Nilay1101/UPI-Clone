@@ -1,0 +1,21 @@
+{
+  "name": "upi-clone",
+  "version": "0.1.0",
+  "description": "UPI-style QR code payment app — backend API (learning/simulation project)",
+  "type": "module",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "keywords": ["upi", "payments", "qr", "wallet"],
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2",
+    "qrcode": "^1.5.4"
+  },
+  "devDependencies": {
+    "supertest": "^7.0.0"
+  }
+}
