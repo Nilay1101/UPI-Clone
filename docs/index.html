@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="theme-color" content="#0f1020" />
+  <title>UPI-Clone — Demo</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <div class="demo-banner">
+    <span>🧪 <strong>Demo</strong> — runs entirely on this device; data stays in your browser.</span>
+    <button id="btn-reset-demo">Reset</button>
+  </div>
+
+  <div class="phone">
+    <!-- Toast / message banner -->
+    <div id="toast" class="toast" hidden></div>
+
+    <!-- ============ ONBOARDING ============ -->
+    <section id="screen-onboard" class="screen">
+      <header class="brand">
+        <div class="logo">₹</div>
+        <h1>UPI-Clone</h1>
+        <p class="tagline">Scan. Pay. Done. <span class="sim">(demo)</span></p>
+      </header>
+
+      <div class="card">
+        <h2>Create an account</h2>
+        <form id="form-create">
+          <label>Your name
+            <input name="name" placeholder="e.g. Nilay" required />
+          </label>
+          <label>Opening balance (₹)
+            <input name="openingBalance" type="number" min="0" step="0.01" value="1000" />
+          </label>
+          <label>Set a payment PIN (4–6 digits)
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Create wallet</button>
+        </form>
+      </div>
+
+      <div class="card muted">
+        <h2>Already have a UPI ID?</h2>
+        <form id="form-login">
+          <label>UPI ID
+            <input name="upiId" placeholder="name1234@upiclone" required />
+          </label>
+          <button type="submit" class="btn">Log in</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ HOME ============ -->
+    <section id="screen-home" class="screen" hidden>
+      <header class="home-header">
+        <div>
+          <p class="greeting">Hi, <span id="home-name">—</span></p>
+          <p class="upi-id" id="home-upiid">—</p>
+        </div>
+        <button class="link-btn" id="btn-logout">Switch</button>
+      </header>
+
+      <div class="balance-card">
+        <p class="balance-label">Balance</p>
+        <p class="balance-amount">₹<span id="home-balance">0.00</span></p>
+        <button class="link-btn light" id="btn-refresh">Refresh</button>
+      </div>
+
+      <div class="actions">
+        <button class="action" data-go="screen-pay">
+          <span class="action-icon">📷</span>
+          <span>Scan &amp; Pay</span>
+        </button>
+        <button class="action" data-go="screen-receive">
+          <span class="action-icon">📥</span>
+          <span>Receive</span>
+        </button>
+        <button class="action" data-go="screen-history">
+          <span class="action-icon">🧾</span>
+          <span>History</span>
+        </button>
+      </div>
+    </section>
+
+    <!-- ============ RECEIVE / MY QR ============ -->
+    <section id="screen-receive" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Receive money</h2>
+      </header>
+
+      <div class="card">
+        <form id="form-qr">
+          <label>Amount (₹) <span class="optional">optional</span>
+            <input name="amount" type="number" min="0" step="0.01" placeholder="Any amount" />
+          </label>
+          <label>Note <span class="optional">optional</span>
+            <input name="note" placeholder="e.g. Dinner" />
+          </label>
+          <button type="submit" class="btn primary">Show my QR</button>
+        </form>
+      </div>
+
+      <div id="qr-result" class="card qr-card" hidden>
+        <img id="qr-image" alt="Payment QR code" />
+        <p class="qr-caption">Ask the payer to scan this</p>
+        <code id="qr-link" class="upi-link"></code>
+      </div>
+    </section>
+
+    <!-- ============ PAY ============ -->
+    <section id="screen-pay" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Scan &amp; Pay</h2>
+      </header>
+
+      <div class="card">
+        <div id="scanner"></div>
+        <div class="scan-controls">
+          <button id="btn-scan-start" class="btn">Start camera</button>
+          <button id="btn-scan-stop" class="btn" hidden>Stop camera</button>
+        </div>
+        <p class="hint">No camera? Paste a UPI link or enter details below.</p>
+      </div>
+
+      <div class="card">
+        <h2>Payment details</h2>
+        <form id="form-pay">
+          <label>Pay to (UPI ID or upi:// link)
+            <input name="to" placeholder="ravi0001@upiclone" required />
+          </label>
+          <label>Amount (₹)
+            <input name="amount" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Note <span class="optional">optional</span>
+            <input name="note" placeholder="What's it for?" />
+          </label>
+          <label>Your payment PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Pay now</button>
+        </form>
+        <p class="demo-contacts">Demo people you can pay:
+          <code>ravi0001@upiclone</code> · <code>priya0002@upiclone</code>.
+          Tip: enter your PIN wrong 3× to see the lockout.</p>
+      </div>
+    </section>
+
+    <!-- ============ HISTORY ============ -->
+    <section id="screen-history" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Transactions</h2>
+      </header>
+      <div id="history-list" class="history"></div>
+    </section>
+  </div>
+
+  <!-- QR scanning (Pay screen) + QR generation (Receive screen), from CDNs -->
+  <script src="vendor/qrcode.min.js"></script>
+  <script src="vendor/html5-qrcode.min.js"></script>
+  <script src="demo.js"></script>
+</body>
+</html>
