@@ -39,6 +39,18 @@ export function createApp(store) {
     createdAt: t.createdAt,
   });
 
+  const serializeRequest = (r) => ({
+    id: r.id,
+    from: r.from,
+    to: r.to,
+    amountRupees: paiseToRupees(r.amountPaise),
+    note: r.note,
+    status: r.status,
+    txnId: r.txnId,
+    createdAt: r.createdAt,
+    resolvedAt: r.resolvedAt,
+  });
+
   // Wrap async handlers so rejected promises reach the error middleware.
   const asyncHandler = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
@@ -129,6 +141,47 @@ export function createApp(store) {
       payer: serializeUser(store.getUser(from)),
       payee: serializeUser(store.getUser(to)),
     });
+  });
+
+  // Create a money request: { from (requester), to (payer), amount, note? }.
+  app.post('/requests', (req, res) => {
+    const { from, to, amount, note } = req.body ?? {};
+    if (!from) throw new ApiError(400, 'from (requester UPI ID) is required');
+    if (!to) throw new ApiError(400, 'to (payer UPI ID) is required');
+    if (amount == null || amount === '') throw new ApiError(400, 'amount is required');
+    const amountPaise = rupeesToPaise(amount);
+    if (Number.isNaN(amountPaise)) throw new ApiError(400, 'amount must be a number');
+
+    const request = store.createRequest({ fromUpiId: from, toUpiId: to, amountPaise, note });
+    res.status(201).json(serializeRequest(request));
+  });
+
+  // A user's requests: incoming (to pay) and outgoing (they raised).
+  app.get('/users/:upiId/requests', (req, res) => {
+    store.requireUser(req.params.upiId, 'user');
+    const { incoming, outgoing } = store.getRequestsForUser(req.params.upiId);
+    res.json({
+      incoming: incoming.map(serializeRequest),
+      outgoing: outgoing.map(serializeRequest),
+    });
+  });
+
+  // Approve a request (payer pays, authorised with their PIN).
+  app.post('/requests/:id/approve', (req, res) => {
+    const { pin } = req.body ?? {};
+    const { request, transaction } = store.approveRequest(req.params.id, pin);
+    res.status(201).json({
+      request: serializeRequest(request),
+      transaction: serializeTxn(transaction),
+      payer: serializeUser(store.getUser(request.to)),
+      payee: serializeUser(store.getUser(request.from)),
+    });
+  });
+
+  // Decline a request.
+  app.post('/requests/:id/decline', (req, res) => {
+    const request = store.declineRequest(req.params.id);
+    res.json(serializeRequest(request));
   });
 
   // 404 for anything unmatched.

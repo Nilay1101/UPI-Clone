@@ -42,6 +42,10 @@ paste a `upi://` link or type a UPI ID + amount instead.
    their PIN**.
 4. Balances update atomically and both parties see the transaction in history.
 
+You can also **request money** ("collect"): ask another user to pay you, and
+they approve (authorising with their PIN — which runs a normal transfer, so
+the PIN + lockout rules apply) or decline.
+
 PINs are never stored in plaintext — only a salted scrypt hash is kept, and a
 wrong or missing PIN rejects the payment without moving any money. After 3
 consecutive wrong PINs the account is **locked for 15 minutes** (payments are
@@ -58,6 +62,10 @@ lock auto-expires.
 | GET    | `/users/:upiId/qr`            | Payment QR; optional `?amount=&note=`        |
 | GET    | `/users/:upiId/transactions`  | Transaction history                          |
 | POST   | `/pay`                        | Pay via `{ from, to, amount, pin }` **or** `{ from, upiUri, pin }` (scanned QR) |
+| POST   | `/requests`                   | Request money: `{ from (requester), to (payer), amount, note? }` |
+| GET    | `/users/:upiId/requests`      | A user's requests: `{ incoming, outgoing }` |
+| POST   | `/requests/:id/approve`       | Payer approves & pays: `{ pin }` |
+| POST   | `/requests/:id/decline`       | Decline a pending request |
 
 `pin` is the payer's 4–6 digit payment PIN. Amounts in requests/responses are
 in **rupees**. Errors return `{ "error": "..." }` with an appropriate HTTP
@@ -94,6 +102,7 @@ test/
   api.test.js         # end-to-end API tests
   persistence.test.js # data survives a restart; failed transfers roll back
   lockout.test.js     # wrong-PIN lockout: locks, resets, and expires
+  requests.test.js    # request-money: create, approve (with PIN), decline
 public/
   index.html  # web app shell (onboarding, home, receive, pay, history)
   styles.css  # styling
@@ -106,6 +115,5 @@ location with the `DATABASE_PATH` environment variable.
 ## Roadmap / ideas for next
 
 - User login/accounts (session or token auth) instead of entering a UPI ID
-- Request-money / collect flow
 - Idempotency keys + a proper transactions ledger
 - A native mobile app (React Native / Flutter)

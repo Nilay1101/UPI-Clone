@@ -72,6 +72,11 @@
           <span class="action-icon">📥</span>
           <span>Receive</span>
         </button>
+        <button class="action" data-go="screen-request">
+          <span class="action-icon">🙋</span>
+          <span>Request</span>
+          <span id="req-badge" class="badge" hidden>0</span>
+        </button>
         <button class="action" data-go="screen-history">
           <span class="action-icon">🧾</span>
           <span>History</span>
@@ -103,6 +108,36 @@
         <p class="qr-caption">Ask the payer to scan this</p>
         <code id="qr-link" class="upi-link"></code>
       </div>
+    </section>
+
+    <!-- ============ REQUESTS ============ -->
+    <section id="screen-request" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Requests</h2>
+      </header>
+
+      <div class="card">
+        <h2>Ask for money</h2>
+        <form id="form-request">
+          <label>Who should pay you? (their UPI ID)
+            <input name="to" placeholder="ravi0001@upiclone" required />
+          </label>
+          <label>Amount (₹)
+            <input name="amount" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Note <span class="optional">optional</span>
+            <input name="note" placeholder="What's it for?" />
+          </label>
+          <button type="submit" class="btn primary">Send request</button>
+        </form>
+      </div>
+
+      <h3 class="section-title">Incoming — asking you to pay</h3>
+      <div id="requests-incoming" class="requests"></div>
+
+      <h3 class="section-title">Sent by you</h3>
+      <div id="requests-outgoing" class="requests"></div>
     </section>
 
     <!-- ============ PAY ============ -->

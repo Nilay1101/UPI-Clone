@@ -56,6 +56,23 @@ export function createStore({
 
     CREATE INDEX IF NOT EXISTS idx_txn_from ON transactions(from_upi);
     CREATE INDEX IF NOT EXISTS idx_txn_to   ON transactions(to_upi);
+
+    -- Money requests ("collect"). from_upi is the requester (who gets paid);
+    -- to_upi is the payer being asked. Approving runs a normal transfer.
+    CREATE TABLE IF NOT EXISTS payment_requests (
+      id           TEXT PRIMARY KEY,
+      from_upi     TEXT NOT NULL REFERENCES users(upi_id),
+      to_upi       TEXT NOT NULL REFERENCES users(upi_id),
+      amount_paise INTEGER NOT NULL,
+      note         TEXT,
+      status       TEXT NOT NULL DEFAULT 'PENDING',
+      txn_id       TEXT,
+      created_at   TEXT NOT NULL,
+      resolved_at  TEXT
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_req_from ON payment_requests(from_upi);
+    CREATE INDEX IF NOT EXISTS idx_req_to   ON payment_requests(to_upi);
   `);
 
   // Migrate older databases that predate newer columns.
@@ -86,6 +103,19 @@ export function createStore({
       note: row.note,
       status: row.status,
       createdAt: row.created_at,
+    };
+
+  const toRequest = (row) =>
+    row && {
+      id: row.id,
+      from: row.from_upi,
+      to: row.to_upi,
+      amountPaise: row.amount_paise,
+      note: row.note,
+      status: row.status,
+      txnId: row.txn_id,
+      createdAt: row.created_at,
+      resolvedAt: row.resolved_at,
     };
 
   // ---- Prepared statements ----
@@ -121,6 +151,20 @@ export function createStore({
       `SELECT * FROM transactions
        WHERE from_upi = ? OR to_upi = ?
        ORDER BY rowid DESC`,
+    ),
+    insertRequest: db.prepare(
+      `INSERT INTO payment_requests (id, from_upi, to_upi, amount_paise, note, status, created_at)
+       VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`,
+    ),
+    getRequest: db.prepare(`SELECT * FROM payment_requests WHERE id = ?`),
+    requestsIncoming: db.prepare(
+      `SELECT * FROM payment_requests WHERE to_upi = ? ORDER BY rowid DESC`,
+    ),
+    requestsOutgoing: db.prepare(
+      `SELECT * FROM payment_requests WHERE from_upi = ? ORDER BY rowid DESC`,
+    ),
+    resolveRequest: db.prepare(
+      `UPDATE payment_requests SET status = ?, txn_id = ?, resolved_at = ? WHERE id = ?`,
     ),
   };
 
@@ -275,5 +319,88 @@ export function createStore({
     return stmts.txnsForUser.all(upiId, upiId).map(toTxn);
   }
 
-  return { createUser, getUser, requireUser, transfer, getTransactions, db };
+  /* ---------------- Money requests ("collect") ---------------- */
+
+  /** Create a request asking `toUpiId` (the payer) to pay `fromUpiId`. */
+  function createRequest({ fromUpiId, toUpiId, amountPaise, note }) {
+    if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
+      throw new ApiError(400, 'amount must be a positive value');
+    }
+    if (fromUpiId === toUpiId) {
+      throw new ApiError(400, 'cannot request money from yourself');
+    }
+    requireUser(fromUpiId, 'requester');
+    requireUser(toUpiId, 'payer');
+
+    const request = {
+      id: randomUUID(),
+      from: fromUpiId,
+      to: toUpiId,
+      amountPaise,
+      note: note ? String(note) : null,
+      status: 'PENDING',
+      createdAt: new Date().toISOString(),
+    };
+    stmts.insertRequest.run(
+      request.id,
+      request.from,
+      request.to,
+      request.amountPaise,
+      request.note,
+      request.createdAt,
+    );
+    return toRequest(stmts.getRequest.get(request.id));
+  }
+
+  function getRequest(id) {
+    return toRequest(stmts.getRequest.get(id)) || null;
+  }
+
+  /** Requests addressed to this user (incoming) and raised by them (outgoing). */
+  function getRequestsForUser(upiId) {
+    return {
+      incoming: stmts.requestsIncoming.all(upiId).map(toRequest),
+      outgoing: stmts.requestsOutgoing.all(upiId).map(toRequest),
+    };
+  }
+
+  /**
+   * Approve a pending request: the payer (to_upi) pays the requester (from_upi)
+   * using their PIN. Reuses `transfer`, so PIN + lockout + balance rules apply.
+   */
+  function approveRequest(id, pin) {
+    const req = stmts.getRequest.get(id);
+    if (!req) throw new ApiError(404, `request '${id}' not found`);
+    if (req.status !== 'PENDING') {
+      throw new ApiError(409, `request already ${req.status.toLowerCase()}`);
+    }
+
+    const txn = transfer({
+      fromUpiId: req.to_upi, // payer approves and pays
+      toUpiId: req.from_upi, // requester receives
+      amountPaise: req.amount_paise,
+      note: req.note,
+      pin,
+    });
+
+    stmts.resolveRequest.run('APPROVED', txn.id, new Date().toISOString(), id);
+    return { request: toRequest(stmts.getRequest.get(id)), transaction: txn };
+  }
+
+  /** Decline a pending request without paying. */
+  function declineRequest(id) {
+    const req = stmts.getRequest.get(id);
+    if (!req) throw new ApiError(404, `request '${id}' not found`);
+    if (req.status !== 'PENDING') {
+      throw new ApiError(409, `request already ${req.status.toLowerCase()}`);
+    }
+    stmts.resolveRequest.run('DECLINED', null, new Date().toISOString(), id);
+    return toRequest(stmts.getRequest.get(id));
+  }
+
+  return {
+    createUser, getUser, requireUser, transfer, getTransactions,
+    createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
+    db,
+  };
 }

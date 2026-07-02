@@ -35,6 +35,7 @@ function show(screenId) {
   // Stop the camera whenever we leave the pay screen.
   if (screenId !== 'screen-pay') stopScanner();
   if (screenId === 'screen-history') loadHistory();
+  if (screenId === 'screen-request') loadRequests();
 }
 
 const rupees = (n) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -60,6 +61,21 @@ function renderHome() {
   $('#home-name').textContent = state.user.name;
   $('#home-upiid').textContent = state.user.upiId;
   $('#home-balance').textContent = rupees(state.user.balanceRupees);
+  refreshRequestBadge();
+}
+
+// Show a red badge on the Request tile with the count of pending incoming requests.
+async function refreshRequestBadge() {
+  if (!state.user) return;
+  const badge = $('#req-badge');
+  try {
+    const { incoming } = await api(`/users/${encodeURIComponent(state.user.upiId)}/requests`);
+    const pending = incoming.filter((r) => r.status === 'PENDING').length;
+    badge.textContent = pending;
+    badge.hidden = pending === 0;
+  } catch {
+    badge.hidden = true;
+  }
 }
 
 async function refreshBalance() {
@@ -213,6 +229,119 @@ $('#form-pay').addEventListener('submit', async (e) => {
   } catch (err) {
     toast(err.message, 'err');
   }
+});
+
+/* ---------------- Requests (collect) ---------------- */
+$('#form-request').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const req = await api('/requests', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: state.user.upiId,
+        to: f.get('to').trim(),
+        amount: Number(f.get('amount')),
+        note: f.get('note') || undefined,
+      }),
+    });
+    toast(`Request for ₹${rupees(req.amountRupees)} sent to ${req.to}`, 'ok');
+    e.target.reset();
+    loadRequests();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
+
+async function approveRequest(id) {
+  const pin = $(`#pin-${id}`)?.value;
+  if (!pin) return toast('Enter your PIN to approve', 'err');
+  try {
+    const result = await api(`/requests/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ pin }),
+    });
+    state.user = result.payer;
+    renderHome();
+    toast(`Paid ₹${rupees(result.transaction.amountRupees)} to ${result.payee.name}`, 'ok');
+    loadRequests();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function declineRequest(id) {
+  try {
+    await api(`/requests/${id}/decline`, { method: 'POST' });
+    toast('Request declined', 'ok');
+    loadRequests();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function loadRequests() {
+  const inEl = $('#requests-incoming');
+  const outEl = $('#requests-outgoing');
+  inEl.innerHTML = '<p class="empty">Loading…</p>';
+  outEl.innerHTML = '';
+  try {
+    const { incoming, outgoing } = await api(`/users/${encodeURIComponent(state.user.upiId)}/requests`);
+
+    inEl.innerHTML = '';
+    const pending = incoming.filter((r) => r.status === 'PENDING');
+    if (!pending.length) {
+      inEl.innerHTML = '<p class="empty">No requests to pay.</p>';
+    } else {
+      for (const r of pending) {
+        const el = document.createElement('div');
+        el.className = 'req';
+        el.innerHTML = `
+          <div class="req-top">
+            <span class="req-party">${escapeHtml(r.from)} requested</span>
+            <span class="req-amount">₹${rupees(r.amountRupees)}</span>
+          </div>
+          <p class="req-note">${r.note ? escapeHtml(r.note) : 'No note'}</p>
+          <div class="req-pin">
+            <input id="pin-${r.id}" type="password" inputmode="numeric" autocomplete="off"
+                   maxlength="6" placeholder="Your PIN" />
+          </div>
+          <div class="req-actions">
+            <button class="btn primary" data-approve="${r.id}">Pay</button>
+            <button class="btn danger" data-decline="${r.id}">Decline</button>
+          </div>`;
+        inEl.appendChild(el);
+      }
+    }
+
+    outEl.innerHTML = '';
+    if (!outgoing.length) {
+      outEl.innerHTML = '<p class="empty">You haven\'t sent any requests.</p>';
+    } else {
+      for (const r of outgoing) {
+        const el = document.createElement('div');
+        el.className = 'req';
+        el.innerHTML = `
+          <div class="req-top">
+            <span class="req-party">To ${escapeHtml(r.to)}</span>
+            <span class="req-amount">₹${rupees(r.amountRupees)}</span>
+          </div>
+          <p class="req-note">${r.note ? escapeHtml(r.note) : 'No note'}</p>
+          <span class="req-status ${r.status.toLowerCase()}">${r.status.toLowerCase()}</span>`;
+        outEl.appendChild(el);
+      }
+    }
+  } catch (err) {
+    inEl.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+// Event delegation for the dynamically-rendered approve/decline buttons.
+$('#requests-incoming').addEventListener('click', (e) => {
+  const approve = e.target.closest('[data-approve]');
+  const decline = e.target.closest('[data-decline]');
+  if (approve) approveRequest(approve.dataset.approve);
+  else if (decline) declineRequest(decline.dataset.decline);
 });
 
 /* ---------------- History ---------------- */
