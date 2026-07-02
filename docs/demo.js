@@ -44,10 +44,15 @@ function seedDb() {
       'priya0002@upiclone': person('priya0002@upiclone', 'Priya', 25000),
     },
     transactions: [],
+    requests: [],
   };
   saveDb(d);
   return d;
 }
+function ensureRequests(d) {
+  if (!d.requests) d.requests = [];
+}
+const uuid = () => (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random());
 function db() {
   return loadDb() || seedDb();
 }
@@ -86,6 +91,11 @@ const serializeTxn = (t) => ({
   id: t.id, from: t.from, to: t.to,
   amountRupees: paiseToRupees(t.amountPaise), note: t.note, status: t.status, createdAt: t.createdAt,
 });
+const serializeRequest = (r) => ({
+  id: r.id, from: r.from, to: r.to,
+  amountRupees: paiseToRupees(r.amountPaise), note: r.note, status: r.status,
+  txnId: r.txnId, createdAt: r.createdAt, resolvedAt: r.resolvedAt,
+});
 
 function requireUser(d, upiId, label) {
   const u = d.users[upiId];
@@ -120,6 +130,33 @@ function authorizePin(user, pin) {
   }
   user.failedPinAttempts = attempts;
   throw new Error(`incorrect PIN; ${MAX_PIN_ATTEMPTS - attempts} attempt(s) left before lockout`);
+}
+
+/** Move money (used by both /pay and request approval). Saves `d` itself. */
+function doTransfer(d, fromId, toId, amountPaise, note, pin) {
+  if (!Number.isInteger(amountPaise) || amountPaise <= 0) throw new Error('amount must be a positive value');
+  if (fromId === toId) throw new Error('cannot transfer to the same account');
+  const payer = requireUser(d, fromId, 'payer');
+  requireUser(d, toId, 'payee');
+  try {
+    authorizePin(payer, pin); // mutates attempt/lock counters
+  } catch (e) {
+    saveDb(d); // persist the failed-attempt bookkeeping even though we throw
+    throw e;
+  }
+  if (payer.balancePaise < amountPaise) {
+    saveDb(d);
+    throw new Error('insufficient balance');
+  }
+  payer.balancePaise -= amountPaise;
+  d.users[toId].balancePaise += amountPaise;
+  const txn = {
+    id: uuid(), from: fromId, to: toId, amountPaise, note: note ? String(note) : null,
+    status: 'SUCCESS', createdAt: new Date().toISOString(),
+  };
+  d.transactions.unshift(txn);
+  saveDb(d);
+  return txn;
 }
 
 /** Router that mimics the real HTTP API. Returns data or throws Error(message). */
@@ -172,6 +209,15 @@ async function api(path, options = {}) {
       const txns = d.transactions.filter((t) => t.from === upiId || t.to === upiId).map(serializeTxn);
       return { transactions: txns };
     }
+
+    if (parts.length === 3 && parts[2] === 'requests' && method === 'GET') {
+      requireUser(d, upiId, 'user');
+      ensureRequests(d);
+      return {
+        incoming: d.requests.filter((r) => r.to === upiId).map(serializeRequest),
+        outgoing: d.requests.filter((r) => r.from === upiId).map(serializeRequest),
+      };
+    }
   }
 
   if (rawPath === '/pay' && method === 'POST') {
@@ -188,38 +234,63 @@ async function api(path, options = {}) {
     if (amount == null || amount === '') throw new Error('amount is required');
     const amountPaise = rupeesToPaise(amount);
     if (Number.isNaN(amountPaise)) throw new Error('amount must be a number');
-    if (amountPaise <= 0) throw new Error('amount must be a positive value');
-    if (from === to) throw new Error('cannot transfer to the same account');
 
-    const payer = requireUser(d, from, 'payer');
-    requireUser(d, to, 'payee');
-
-    try {
-      authorizePin(payer, pin); // mutates attempt/lock counters
-    } catch (e) {
-      saveDb(d); // persist the failed-attempt bookkeeping even though we throw
-      throw e;
-    }
-
-    if (payer.balancePaise < amountPaise) {
-      saveDb(d);
-      throw new Error('insufficient balance');
-    }
-
-    payer.balancePaise -= amountPaise;
-    d.users[to].balancePaise += amountPaise;
-    const txn = {
-      id: (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random()),
-      from, to, amountPaise, note: note ? String(note) : null,
-      status: 'SUCCESS', createdAt: new Date().toISOString(),
-    };
-    d.transactions.unshift(txn);
-    saveDb(d);
+    const txn = doTransfer(d, from, to, amountPaise, note, pin);
     return {
       transaction: serializeTxn(txn),
-      payer: serializeUser(payer),
+      payer: serializeUser(d.users[from]),
       payee: serializeUser(d.users[to]),
     };
+  }
+
+  // ----- Money requests -----
+  if (rawPath === '/requests' && method === 'POST') {
+    if (!body.from) throw new Error('from (requester UPI ID) is required');
+    if (!body.to) throw new Error('to (payer UPI ID) is required');
+    if (body.amount == null || body.amount === '') throw new Error('amount is required');
+    const amountPaise = rupeesToPaise(body.amount);
+    if (Number.isNaN(amountPaise)) throw new Error('amount must be a number');
+    if (amountPaise <= 0) throw new Error('amount must be a positive value');
+    if (body.from === body.to) throw new Error('cannot request money from yourself');
+    requireUser(d, body.from, 'requester');
+    requireUser(d, body.to, 'payer');
+    ensureRequests(d);
+    const req = {
+      id: uuid(), from: body.from, to: body.to, amountPaise,
+      note: body.note ? String(body.note) : null, status: 'PENDING',
+      txnId: null, createdAt: new Date().toISOString(), resolvedAt: null,
+    };
+    d.requests.unshift(req);
+    saveDb(d);
+    return serializeRequest(req);
+  }
+
+  if (parts[0] === 'requests' && parts.length === 3 && method === 'POST') {
+    ensureRequests(d);
+    const id = decodeURIComponent(parts[1]);
+    const req = d.requests.find((r) => r.id === id);
+    if (!req) throw new Error(`request '${id}' not found`);
+    if (req.status !== 'PENDING') throw new Error(`request already ${req.status.toLowerCase()}`);
+
+    if (parts[2] === 'approve') {
+      const txn = doTransfer(d, req.to, req.from, req.amountPaise, req.note, body.pin);
+      req.status = 'APPROVED';
+      req.txnId = txn.id;
+      req.resolvedAt = new Date().toISOString();
+      saveDb(d);
+      return {
+        request: serializeRequest(req),
+        transaction: serializeTxn(txn),
+        payer: serializeUser(d.users[req.to]),
+        payee: serializeUser(d.users[req.from]),
+      };
+    }
+    if (parts[2] === 'decline') {
+      req.status = 'DECLINED';
+      req.resolvedAt = new Date().toISOString();
+      saveDb(d);
+      return serializeRequest(req);
+    }
   }
 
   throw new Error('not found');
@@ -247,6 +318,7 @@ function show(screenId) {
   $$('.screen').forEach((s) => (s.hidden = s.id !== screenId));
   if (screenId !== 'screen-pay') stopScanner();
   if (screenId === 'screen-history') loadHistory();
+  if (screenId === 'screen-request') loadRequests();
 }
 
 const rupees = (n) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -267,6 +339,20 @@ function renderHome() {
   $('#home-name').textContent = state.user.name;
   $('#home-upiid').textContent = state.user.upiId;
   $('#home-balance').textContent = rupees(state.user.balanceRupees);
+  refreshRequestBadge();
+}
+
+async function refreshRequestBadge() {
+  if (!state.user) return;
+  const badge = $('#req-badge');
+  try {
+    const { incoming } = await api(`/users/${encodeURIComponent(state.user.upiId)}/requests`);
+    const pending = incoming.filter((r) => r.status === 'PENDING').length;
+    badge.textContent = pending;
+    badge.hidden = pending === 0;
+  } catch {
+    badge.hidden = true;
+  }
 }
 
 async function refreshBalance() {
@@ -421,6 +507,119 @@ $('#form-pay').addEventListener('submit', async (e) => {
   }
 });
 
+/* ---------------- Requests (collect) ---------------- */
+$('#form-request').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const req = await api('/requests', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: state.user.upiId,
+        to: f.get('to').trim(),
+        amount: Number(f.get('amount')),
+        note: f.get('note') || undefined,
+      }),
+    });
+    toast(`Request for ₹${rupees(req.amountRupees)} sent to ${req.to}`, 'ok');
+    e.target.reset();
+    loadRequests();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
+
+async function approveRequest(id) {
+  const pin = $(`#pin-${id}`)?.value;
+  if (!pin) return toast('Enter your PIN to approve', 'err');
+  try {
+    const result = await api(`/requests/${id}/approve`, {
+      method: 'POST',
+      body: JSON.stringify({ pin }),
+    });
+    state.user = result.payer;
+    renderHome();
+    toast(`Paid ₹${rupees(result.transaction.amountRupees)} to ${result.payee.name}`, 'ok');
+    loadRequests();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function declineRequest(id) {
+  try {
+    await api(`/requests/${id}/decline`, { method: 'POST' });
+    toast('Request declined', 'ok');
+    loadRequests();
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+}
+
+async function loadRequests() {
+  const inEl = $('#requests-incoming');
+  const outEl = $('#requests-outgoing');
+  inEl.innerHTML = '<p class="empty">Loading…</p>';
+  outEl.innerHTML = '';
+  try {
+    const { incoming, outgoing } = await api(`/users/${encodeURIComponent(state.user.upiId)}/requests`);
+
+    inEl.innerHTML = '';
+    const pending = incoming.filter((r) => r.status === 'PENDING');
+    if (!pending.length) {
+      inEl.innerHTML = '<p class="empty">No requests to pay.</p>';
+    } else {
+      for (const r of pending) {
+        const el = document.createElement('div');
+        el.className = 'req';
+        el.innerHTML = `
+          <div class="req-top">
+            <span class="req-party">${escapeHtml(r.from)} requested</span>
+            <span class="req-amount">₹${rupees(r.amountRupees)}</span>
+          </div>
+          <p class="req-note">${r.note ? escapeHtml(r.note) : 'No note'}</p>
+          <div class="req-pin">
+            <input id="pin-${r.id}" type="password" inputmode="numeric" autocomplete="off"
+                   maxlength="6" placeholder="Your PIN" />
+          </div>
+          <div class="req-actions">
+            <button class="btn primary" data-approve="${r.id}">Pay</button>
+            <button class="btn danger" data-decline="${r.id}">Decline</button>
+          </div>`;
+        inEl.appendChild(el);
+      }
+    }
+
+    outEl.innerHTML = '';
+    if (!outgoing.length) {
+      outEl.innerHTML = '<p class="empty">You haven\'t sent any requests.</p>';
+    } else {
+      for (const r of outgoing) {
+        const el = document.createElement('div');
+        el.className = 'req';
+        el.innerHTML = `
+          <div class="req-top">
+            <span class="req-party">To ${escapeHtml(r.to)}</span>
+            <span class="req-amount">₹${rupees(r.amountRupees)}</span>
+          </div>
+          <p class="req-note">${r.note ? escapeHtml(r.note) : 'No note'}</p>
+          <span class="req-status ${r.status.toLowerCase()}">${r.status.toLowerCase()}</span>`;
+        outEl.appendChild(el);
+      }
+    }
+  } catch (err) {
+    inEl.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+$('#requests-incoming').addEventListener('click', (e) => {
+  const approve = e.target.closest('[data-approve]');
+  const decline = e.target.closest('[data-decline]');
+  if (approve) approveRequest(approve.dataset.approve);
+  else if (decline) declineRequest(decline.dataset.decline);
+});
+
+/* ---------------- History ---------------- */
 async function loadHistory() {
   const list = $('#history-list');
   list.innerHTML = '<p class="empty">Loading…</p>';
