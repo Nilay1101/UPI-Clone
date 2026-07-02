@@ -15,13 +15,14 @@ test('data persists across store instances (simulated restart)', () => {
 
   // First "run": create two users and make a payment.
   let store = createStore({ dbPath });
-  const alice = store.createUser({ name: 'Alice', openingBalancePaise: 100000 });
-  const bob = store.createUser({ name: 'Bob', openingBalancePaise: 0 });
+  const alice = store.createUser({ name: 'Alice', pin: '1234', openingBalancePaise: 100000 });
+  const bob = store.createUser({ name: 'Bob', pin: '5678', openingBalancePaise: 0 });
   store.transfer({
     fromUpiId: alice.upiId,
     toUpiId: bob.upiId,
     amountPaise: 30000,
     note: 'Rent',
+    pin: '1234',
   });
   store.db.close();
 
@@ -42,10 +43,16 @@ test('data persists across store instances (simulated restart)', () => {
 test('a failed (over-balance) transfer rolls back and persists nothing', () => {
   const dbPath = tmpDbPath();
   let store = createStore({ dbPath });
-  const a = store.createUser({ name: 'A', openingBalancePaise: 500 });
-  const b = store.createUser({ name: 'B', openingBalancePaise: 0 });
+  const a = store.createUser({ name: 'A', pin: '1234', openingBalancePaise: 500 });
+  const b = store.createUser({ name: 'B', pin: '1234', openingBalancePaise: 0 });
   assert.throws(
-    () => store.transfer({ fromUpiId: a.upiId, toUpiId: b.upiId, amountPaise: 999999 }),
+    () =>
+      store.transfer({
+        fromUpiId: a.upiId,
+        toUpiId: b.upiId,
+        amountPaise: 999999,
+        pin: '1234',
+      }),
     /insufficient balance/,
   );
   store.db.close();

@@ -79,6 +79,7 @@ $('#form-create').addEventListener('submit', async (e) => {
       body: JSON.stringify({
         name: f.get('name'),
         openingBalance: Number(f.get('openingBalance') || 0),
+        pin: f.get('pin'),
       }),
     });
     toast(`Welcome, ${user.name}! Your UPI ID is ${user.upiId}`, 'ok');
@@ -191,7 +192,12 @@ $('#form-pay').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   const to = f.get('to').trim();
-  const body = { from: state.user.upiId, amount: Number(f.get('amount')), note: f.get('note') || undefined };
+  const body = {
+    from: state.user.upiId,
+    amount: Number(f.get('amount')),
+    note: f.get('note') || undefined,
+    pin: f.get('pin'),
+  };
   // Accept either a raw UPI ID or a full upi:// link in the "to" field.
   if (to.startsWith('upi://')) body.upiUri = to;
   else body.to = to;

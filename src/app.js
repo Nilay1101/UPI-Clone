@@ -49,12 +49,12 @@ export function createApp(store) {
 
   // Create a user (wallet). openingBalance is in rupees.
   app.post('/users', (req, res) => {
-    const { name, phone, openingBalance } = req.body ?? {};
+    const { name, phone, pin, openingBalance } = req.body ?? {};
     const openingBalancePaise = rupeesToPaise(openingBalance ?? 0);
     if (Number.isNaN(openingBalancePaise)) {
       throw new ApiError(400, 'openingBalance must be a number');
     }
-    const user = store.createUser({ name, phone, openingBalancePaise });
+    const user = store.createUser({ name, phone, pin, openingBalancePaise });
     res.status(201).json(serializeUser(user));
   });
 
@@ -93,7 +93,7 @@ export function createApp(store) {
   // and can still be overridden in the body).
   app.post('/pay', (req, res) => {
     const body = req.body ?? {};
-    let { from, to, amount, note, upiUri } = body;
+    let { from, to, amount, note, upiUri, pin } = body;
 
     if (upiUri) {
       const parsed = parseUpiUri(upiUri);
@@ -121,6 +121,7 @@ export function createApp(store) {
       toUpiId: to,
       amountPaise,
       note,
+      pin,
     });
 
     res.status(201).json({

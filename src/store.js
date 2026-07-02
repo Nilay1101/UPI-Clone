@@ -1,6 +1,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
 import { generateUpiId } from './upi.js';
+import { hashPin, verifyPin } from './pin.js';
 import { ApiError } from './errors.js';
 
 /**
@@ -33,6 +34,7 @@ export function createStore({ dbPath = ':memory:' } = {}) {
       name         TEXT NOT NULL,
       phone        TEXT,
       balance_paise INTEGER NOT NULL DEFAULT 0,
+      pin_hash     TEXT,
       created_at   TEXT NOT NULL
     );
 
@@ -49,6 +51,12 @@ export function createStore({ dbPath = ':memory:' } = {}) {
     CREATE INDEX IF NOT EXISTS idx_txn_from ON transactions(from_upi);
     CREATE INDEX IF NOT EXISTS idx_txn_to   ON transactions(to_upi);
   `);
+
+  // Migrate older databases created before PINs existed.
+  const userCols = db.prepare(`PRAGMA table_info(users)`).all();
+  if (!userCols.some((c) => c.name === 'pin_hash')) {
+    db.exec(`ALTER TABLE users ADD COLUMN pin_hash TEXT`);
+  }
 
   // ---- Row <-> domain-object mappers (DB is snake_case, app is camelCase) ----
   const toUser = (row) =>
@@ -74,10 +82,11 @@ export function createStore({ dbPath = ':memory:' } = {}) {
   // ---- Prepared statements ----
   const stmts = {
     insertUser: db.prepare(
-      `INSERT INTO users (upi_id, name, phone, balance_paise, created_at)
-       VALUES (?, ?, ?, ?, ?)`,
+      `INSERT INTO users (upi_id, name, phone, balance_paise, pin_hash, created_at)
+       VALUES (?, ?, ?, ?, ?, ?)`,
     ),
     getUser: db.prepare(`SELECT * FROM users WHERE upi_id = ?`),
+    getPinHash: db.prepare(`SELECT pin_hash FROM users WHERE upi_id = ?`),
     debit: db.prepare(
       `UPDATE users SET balance_paise = balance_paise - ? WHERE upi_id = ?`,
     ),
@@ -108,13 +117,14 @@ export function createStore({ dbPath = ':memory:' } = {}) {
     }
   }
 
-  function createUser({ name, phone, openingBalancePaise = 0 }) {
+  function createUser({ name, phone, pin, openingBalancePaise = 0 }) {
     if (!name || !String(name).trim()) {
       throw new ApiError(400, 'name is required');
     }
     if (!Number.isInteger(openingBalancePaise) || openingBalancePaise < 0) {
       throw new ApiError(400, 'openingBalance must be a non-negative amount');
     }
+    const pinHash = hashPin(pin); // validates format + throws ApiError(400) if bad
 
     let upiId = generateUpiId(name);
     while (stmts.getUser.get(upiId)) upiId = generateUpiId(name);
@@ -125,6 +135,7 @@ export function createStore({ dbPath = ':memory:' } = {}) {
       String(name).trim(),
       phone ? String(phone) : null,
       openingBalancePaise,
+      pinHash,
       createdAt,
     );
     return toUser(stmts.getUser.get(upiId));
@@ -145,7 +156,7 @@ export function createStore({ dbPath = ':memory:' } = {}) {
    * then applies the debit, credit and ledger insert inside a single DB
    * transaction so a balance can never be left half-updated.
    */
-  function transfer({ fromUpiId, toUpiId, amountPaise, note }) {
+  function transfer({ fromUpiId, toUpiId, amountPaise, note, pin }) {
     if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
       throw new ApiError(400, 'amount must be a positive value');
     }
@@ -156,6 +167,13 @@ export function createStore({ dbPath = ':memory:' } = {}) {
     return inTransaction(() => {
       const payer = requireUser(fromUpiId, 'payer');
       requireUser(toUpiId, 'payee');
+
+      // Authorise the payment with the payer's PIN.
+      const { pin_hash: pinHash } = stmts.getPinHash.get(fromUpiId);
+      if (pinHash && !verifyPin(pin, pinHash)) {
+        throw new ApiError(401, 'incorrect PIN');
+      }
+
       if (payer.balancePaise < amountPaise) {
         throw new ApiError(422, 'insufficient balance');
       }
