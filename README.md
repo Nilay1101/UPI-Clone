@@ -32,15 +32,27 @@ Then open **http://localhost:3000** in a browser for the web app. Camera QR
 scanning needs `localhost` or HTTPS (a browser requirement); you can always
 paste a `upi://` link or type a UPI ID + amount instead.
 
-## The core flow (walking skeleton)
+## Banks & accounts (GPay-style onboarding)
 
-1. Create two users → each sets a **payment PIN** and gets a wallet + a UPI ID
-   like `alice7844@upiclone`.
-2. A payee generates a **QR code** encoding a `upi://pay` link (optionally with
-   an amount + note).
-3. A payer **scans** that QR (or pastes the link) and pays, **authorising with
-   their PIN**.
-4. Balances update atomically and both parties see the transaction in history.
+Like Google Pay, money lives in **bank accounts** and you sign up by **phone
+number**. The app seeds two dummy banks with two accounts each, across two
+phone numbers:
+
+| Phone | Holder | Bank | UPI ID | Balance |
+|-------|--------|------|--------|---------|
+| 9810000001 | Ravi Kumar | HDFC Bank | `ravi@hdfc` | ₹5,000 |
+| 9810000001 | Ravi Kumar | State Bank of India | `ravi@sbi` | ₹3,000 |
+| 9820000002 | Priya Shah | HDFC Bank | `priya@hdfc` | ₹8,000 |
+| 9820000002 | Priya Shah | State Bank of India | `priya@sbi` | ₹2,000 |
+
+## The core flow
+
+1. **Sign up by phone**: enter your number → the app lists the bank accounts
+   linked to it → pick one and set a **UPI PIN** ("claiming" the account).
+2. Your balance is that **bank account's** balance; payments draw from it.
+3. A payee shows a **QR code** (a `upi://pay` link) or you enter a UPI ID.
+4. A payer pays, **authorising with their PIN**; balances update atomically and
+   both parties see the transaction in history.
 
 You can also **request money** ("collect"): ask another user to pay you, and
 they approve (authorising with their PIN — which runs a normal transfer, so
@@ -57,8 +69,10 @@ lock auto-expires.
 | Method | Path                          | Description                                  |
 |--------|-------------------------------|----------------------------------------------|
 | GET    | `/health`                     | Liveness check                               |
-| POST   | `/users`                      | Create a wallet: `{ name, pin, phone?, openingBalance? }` |
-| GET    | `/users/:upiId`               | Fetch a user + balance                       |
+| GET    | `/banks`                      | List the (dummy) banks                       |
+| GET    | `/accounts?phone=`            | Bank accounts linked to a phone (sign-up step 1) |
+| POST   | `/accounts/:upiId/claim`      | Activate an account by setting a PIN: `{ pin }` (sign-up step 2) |
+| GET    | `/users/:upiId`               | Fetch an account + balance                   |
 | GET    | `/users/:upiId/qr`            | Payment QR; optional `?amount=&note=`        |
 | GET    | `/users/:upiId/transactions`  | Transaction history                          |
 | POST   | `/pay`                        | Pay via `{ from, to, amount, pin }` **or** `{ from, upiUri, pin }` (scanned QR) |
@@ -69,22 +83,21 @@ lock auto-expires.
 
 `pin` is the payer's 4–6 digit payment PIN. Amounts in requests/responses are
 in **rupees**. Errors return `{ "error": "..." }` with an appropriate HTTP
-status (400 bad input, 401 incorrect PIN, 404 unknown user, 422 insufficient
-balance, 423 account locked after too many wrong PINs).
+status (400 bad input, 401 incorrect PIN, 403 account not activated, 404
+unknown account, 422 insufficient balance, 423 account locked after too many
+wrong PINs).
 
 ### Example
 
 ```bash
-# Create two users (each with a payment PIN)
-curl -s -X POST localhost:3000/users -H 'content-type: application/json' \
-  -d '{"name":"Alice","openingBalance":1000,"pin":"1234"}'
-curl -s -X POST localhost:3000/users -H 'content-type: application/json' \
-  -d '{"name":"Bob","pin":"5678"}'
+# Find the accounts linked to a phone, then activate one with a PIN
+curl -s "localhost:3000/accounts?phone=9810000001"
+curl -s -X POST localhost:3000/accounts/ravi@hdfc/claim \
+  -H 'content-type: application/json' -d '{"pin":"1234"}'
 
-# Bob generates a QR requesting ₹300, Alice pays it with her PIN
-curl -s "localhost:3000/users/<bobUpiId>/qr?amount=300&note=Dinner"
+# Ravi pays Priya ₹300 with his PIN
 curl -s -X POST localhost:3000/pay -H 'content-type: application/json' \
-  -d '{"from":"<aliceUpiId>","to":"<bobUpiId>","amount":300,"pin":"1234"}'
+  -d '{"from":"ravi@hdfc","to":"priya@hdfc","amount":300,"pin":"1234"}'
 ```
 
 ## Project layout

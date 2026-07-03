@@ -60,6 +60,7 @@ function renderHome() {
   if (!state.user) return;
   $('#home-name').textContent = state.user.name;
   $('#home-upiid').textContent = state.user.upiId;
+  $('#home-bank').textContent = `${state.user.bankName} · ${state.user.accountMasked}`;
   $('#home-balance').textContent = rupees(state.user.balanceRupees);
   refreshRequestBadge();
 }
@@ -85,31 +86,67 @@ async function refreshBalance() {
   renderHome();
 }
 
-/* ---------------- Onboarding ---------------- */
-$('#form-create').addEventListener('submit', async (e) => {
+/* ---------------- Onboarding (phone → pick bank account) ---------------- */
+const escapeAttr = (s) => String(s).replace(/"/g, '&quot;');
+
+$('#form-phone').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const f = new FormData(e.target);
+  const phone = new FormData(e.target).get('phone').trim();
   try {
-    const user = await api('/users', {
-      method: 'POST',
-      body: JSON.stringify({
-        name: f.get('name'),
-        openingBalance: Number(f.get('openingBalance') || 0),
-        pin: f.get('pin'),
-      }),
-    });
-    toast(`Welcome, ${user.name}! Your UPI ID is ${user.upiId}`, 'ok');
-    await loadUser(user.upiId);
+    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(phone)}`);
+    renderAccountPicker(accounts, phone);
   } catch (err) {
     toast(err.message, 'err');
   }
 });
 
-$('#form-login').addEventListener('submit', async (e) => {
-  e.preventDefault();
-  const upiId = new FormData(e.target).get('upiId').trim();
+function renderAccountPicker(accounts, phone) {
+  const list = $('#account-list');
+  const picker = $('#account-picker');
+  if (!accounts.length) {
+    list.innerHTML = `<p class="empty">No accounts linked to ${escapeHtml(phone)}. Try 9810000001 or 9820000002.</p>`;
+    picker.hidden = false;
+    return;
+  }
+  list.innerHTML = '';
+  for (const a of accounts) {
+    const el = document.createElement('div');
+    el.className = 'acct';
+    const action = a.claimed
+      ? `<button class="btn" data-login="${escapeAttr(a.upiId)}">Log in</button>`
+      : `<div class="acct-claim">
+           <input class="claim-pin" type="password" inputmode="numeric" autocomplete="off"
+                  minlength="4" maxlength="6" placeholder="Set a 4–6 digit PIN" />
+           <button class="btn primary" data-activate="${escapeAttr(a.upiId)}">Activate</button>
+         </div>`;
+    el.innerHTML = `
+      <div class="acct-top">
+        <span class="acct-bank">${escapeHtml(a.bankName)}</span>
+        <span class="acct-bal">₹${rupees(a.balanceRupees)}</span>
+      </div>
+      <p class="acct-sub">${escapeHtml(a.holderName)} · ${escapeHtml(a.accountMasked)} · ${escapeHtml(a.upiId)}</p>
+      ${action}`;
+    list.appendChild(el);
+  }
+  picker.hidden = false;
+}
+
+// Delegate clicks for "Log in" (claimed) and "Activate" (set PIN, then log in).
+$('#account-list').addEventListener('click', async (e) => {
+  const login = e.target.closest('[data-login]');
+  const activate = e.target.closest('[data-activate]');
   try {
-    await loadUser(upiId);
+    if (login) {
+      await loadUser(login.dataset.login);
+    } else if (activate) {
+      const pin = activate.closest('.acct-claim').querySelector('.claim-pin').value;
+      const user = await api(`/accounts/${encodeURIComponent(activate.dataset.activate)}/claim`, {
+        method: 'POST',
+        body: JSON.stringify({ pin }),
+      });
+      toast(`Activated ${user.upiId} on ${user.bankName}`, 'ok');
+      await loadUser(user.upiId);
+    }
   } catch (err) {
     toast(err.message, 'err');
   }
@@ -118,6 +155,8 @@ $('#form-login').addEventListener('submit', async (e) => {
 $('#btn-logout').addEventListener('click', () => {
   clearSession();
   state.user = null;
+  $('#account-picker').hidden = true;
+  $('#form-phone').reset();
   show('screen-onboard');
 });
 

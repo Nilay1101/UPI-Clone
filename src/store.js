@@ -1,68 +1,86 @@
-import { DatabaseSync } from 'node:sqlite';
 import { randomUUID } from 'node:crypto';
-import { generateUpiId } from './upi.js';
+import { DatabaseSync } from 'node:sqlite';
 import { hashPin, verifyPin } from './pin.js';
 import { ApiError } from './errors.js';
 
 /**
  * SQLite-backed data store + core payment logic.
  *
- * This is deliberately the ONE place money moves, so the rules (validation,
- * sufficient balance, atomic debit/credit) live in a single, testable spot.
+ * GPay-style model: money lives in **bank accounts**. Each bank account has a
+ * UPI ID (VPA), a phone number, a holder, and a balance. You sign up by phone
+ * number — the app finds the accounts linked to that number, you pick one and
+ * set a UPI PIN ("claim" it), and payments draw from that bank account.
  *
- * Data is persisted with the built-in `node:sqlite` module — a real SQL
- * database in a single file, no separate server and no native dependency.
- *
- *   createStore()                       -> in-memory DB (used by tests: fast,
- *                                          isolated, gone when the process ends)
+ *   createStore()                       -> in-memory DB (tests: fast, isolated)
  *   createStore({ dbPath: 'x.sqlite' }) -> persisted to a file on disk
  *
- * The public interface (createUser / getUser / requireUser / transfer /
- * getTransactions) is unchanged from the original in-memory version, so the
- * rest of the app and the tests don't care that there's now a database here.
+ * The store is the ONE place money moves, so validation, PIN/lockout and the
+ * atomic debit/credit all live here.
  */
+
+const SEED_BANKS = [
+  { id: 'hdfc', name: 'HDFC Bank', ifsc: 'HDFC0001' },
+  { id: 'sbi', name: 'State Bank of India', ifsc: 'SBIN0001' },
+];
+
+// 2 banks x 2 accounts, across 2 phone numbers (each phone has an account in
+// both banks — so signing up by phone offers a real choice, like GPay).
+const SEED_ACCOUNTS = [
+  { upiId: 'ravi@hdfc', bankId: 'hdfc', accountNumber: '1001', holderName: 'Ravi Kumar', phone: '9810000001', balancePaise: 500000 },
+  { upiId: 'ravi@sbi', bankId: 'sbi', accountNumber: '2001', holderName: 'Ravi Kumar', phone: '9810000001', balancePaise: 300000 },
+  { upiId: 'priya@hdfc', bankId: 'hdfc', accountNumber: '1002', holderName: 'Priya Shah', phone: '9820000002', balancePaise: 800000 },
+  { upiId: 'priya@sbi', bankId: 'sbi', accountNumber: '2002', holderName: 'Priya Shah', phone: '9820000002', balancePaise: 200000 },
+];
+
 export function createStore({
   dbPath = ':memory:',
   maxPinAttempts = 3,
   lockMs = 15 * 60 * 1000, // 15 minutes
+  seed = true,
 } = {}) {
   const db = new DatabaseSync(dbPath);
 
-  // Better durability + concurrency for file-backed databases.
   db.exec('PRAGMA journal_mode = WAL');
   db.exec('PRAGMA foreign_keys = ON');
 
   db.exec(`
-    CREATE TABLE IF NOT EXISTS users (
-      upi_id       TEXT PRIMARY KEY,
-      name         TEXT NOT NULL,
-      phone        TEXT,
-      balance_paise INTEGER NOT NULL DEFAULT 0,
-      pin_hash     TEXT,
-      failed_pin_attempts INTEGER NOT NULL DEFAULT 0,
-      locked_until TEXT,
-      created_at   TEXT NOT NULL
+    CREATE TABLE IF NOT EXISTS banks (
+      id   TEXT PRIMARY KEY,
+      name TEXT NOT NULL,
+      ifsc TEXT NOT NULL
     );
+
+    CREATE TABLE IF NOT EXISTS accounts (
+      upi_id         TEXT PRIMARY KEY,
+      bank_id        TEXT NOT NULL REFERENCES banks(id),
+      account_number TEXT NOT NULL,
+      holder_name    TEXT NOT NULL,
+      phone          TEXT NOT NULL,
+      balance_paise  INTEGER NOT NULL DEFAULT 0,
+      pin_hash       TEXT,
+      failed_pin_attempts INTEGER NOT NULL DEFAULT 0,
+      locked_until   TEXT,
+      claimed        INTEGER NOT NULL DEFAULT 0,
+      created_at     TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_acct_phone ON accounts(phone);
 
     CREATE TABLE IF NOT EXISTS transactions (
       id           TEXT PRIMARY KEY,
-      from_upi     TEXT NOT NULL REFERENCES users(upi_id),
-      to_upi       TEXT NOT NULL REFERENCES users(upi_id),
+      from_upi     TEXT NOT NULL REFERENCES accounts(upi_id),
+      to_upi       TEXT NOT NULL REFERENCES accounts(upi_id),
       amount_paise INTEGER NOT NULL,
       note         TEXT,
       status       TEXT NOT NULL,
       created_at   TEXT NOT NULL
     );
-
     CREATE INDEX IF NOT EXISTS idx_txn_from ON transactions(from_upi);
     CREATE INDEX IF NOT EXISTS idx_txn_to   ON transactions(to_upi);
 
-    -- Money requests ("collect"). from_upi is the requester (who gets paid);
-    -- to_upi is the payer being asked. Approving runs a normal transfer.
     CREATE TABLE IF NOT EXISTS payment_requests (
       id           TEXT PRIMARY KEY,
-      from_upi     TEXT NOT NULL REFERENCES users(upi_id),
-      to_upi       TEXT NOT NULL REFERENCES users(upi_id),
+      from_upi     TEXT NOT NULL REFERENCES accounts(upi_id),
+      to_upi       TEXT NOT NULL REFERENCES accounts(upi_id),
       amount_paise INTEGER NOT NULL,
       note         TEXT,
       status       TEXT NOT NULL DEFAULT 'PENDING',
@@ -70,176 +88,173 @@ export function createStore({
       created_at   TEXT NOT NULL,
       resolved_at  TEXT
     );
-
     CREATE INDEX IF NOT EXISTS idx_req_from ON payment_requests(from_upi);
     CREATE INDEX IF NOT EXISTS idx_req_to   ON payment_requests(to_upi);
   `);
 
-  // Migrate older databases that predate newer columns.
-  const userCols = db.prepare(`PRAGMA table_info(users)`).all().map((c) => c.name);
-  const addColumn = (name, ddl) => {
-    if (!userCols.includes(name)) db.exec(`ALTER TABLE users ADD COLUMN ${ddl}`);
-  };
-  addColumn('pin_hash', 'pin_hash TEXT');
-  addColumn('failed_pin_attempts', 'failed_pin_attempts INTEGER NOT NULL DEFAULT 0');
-  addColumn('locked_until', 'locked_until TEXT');
+  // Seed the dummy banks + accounts once (only into an empty DB).
+  if (seed && db.prepare('SELECT COUNT(*) AS c FROM banks').get().c === 0) {
+    const insBank = db.prepare('INSERT INTO banks (id, name, ifsc) VALUES (?, ?, ?)');
+    for (const b of SEED_BANKS) insBank.run(b.id, b.name, b.ifsc);
+    const now = new Date().toISOString();
+    const insAcct = db.prepare(
+      `INSERT INTO accounts (upi_id, bank_id, account_number, holder_name, phone, balance_paise, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    );
+    for (const a of SEED_ACCOUNTS) {
+      insAcct.run(a.upiId, a.bankId, a.accountNumber, a.holderName, a.phone, a.balancePaise, now);
+    }
+  }
 
-  // ---- Row <-> domain-object mappers (DB is snake_case, app is camelCase) ----
-  const toUser = (row) =>
+  // ---- Mappers (DB snake_case -> app camelCase) ----
+  const toAccount = (row) =>
     row && {
       upiId: row.upi_id,
-      name: row.name,
+      bankId: row.bank_id,
+      bankName: row.bank_name,
+      accountNumber: row.account_number,
+      holderName: row.holder_name,
       phone: row.phone,
       balancePaise: row.balance_paise,
+      claimed: !!row.claimed,
       createdAt: row.created_at,
     };
 
   const toTxn = (row) =>
     row && {
-      id: row.id,
-      from: row.from_upi,
-      to: row.to_upi,
-      amountPaise: row.amount_paise,
-      note: row.note,
-      status: row.status,
-      createdAt: row.created_at,
+      id: row.id, from: row.from_upi, to: row.to_upi,
+      amountPaise: row.amount_paise, note: row.note, status: row.status, createdAt: row.created_at,
     };
 
   const toRequest = (row) =>
     row && {
-      id: row.id,
-      from: row.from_upi,
-      to: row.to_upi,
-      amountPaise: row.amount_paise,
-      note: row.note,
-      status: row.status,
-      txnId: row.txn_id,
-      createdAt: row.created_at,
-      resolvedAt: row.resolved_at,
+      id: row.id, from: row.from_upi, to: row.to_upi,
+      amountPaise: row.amount_paise, note: row.note, status: row.status,
+      txnId: row.txn_id, createdAt: row.created_at, resolvedAt: row.resolved_at,
     };
 
-  // ---- Prepared statements ----
+  const ACCOUNT_SELECT = `
+    SELECT a.*, b.name AS bank_name FROM accounts a JOIN banks b ON b.id = a.bank_id`;
+
   const stmts = {
-    insertUser: db.prepare(
-      `INSERT INTO users (upi_id, name, phone, balance_paise, pin_hash, created_at)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+    banks: db.prepare('SELECT * FROM banks ORDER BY name'),
+    accountsByPhone: db.prepare(`${ACCOUNT_SELECT} WHERE a.phone = ? ORDER BY b.name`),
+    getAccount: db.prepare(`${ACCOUNT_SELECT} WHERE a.upi_id = ?`),
+    insertAccount: db.prepare(
+      `INSERT INTO accounts (upi_id, bank_id, account_number, holder_name, phone, balance_paise, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ),
-    getUser: db.prepare(`SELECT * FROM users WHERE upi_id = ?`),
+    claim: db.prepare(
+      `UPDATE accounts SET pin_hash = ?, claimed = 1, failed_pin_attempts = 0, locked_until = NULL WHERE upi_id = ?`,
+    ),
     getAuth: db.prepare(
-      `SELECT pin_hash, failed_pin_attempts, locked_until FROM users WHERE upi_id = ?`,
+      `SELECT pin_hash, failed_pin_attempts, locked_until FROM accounts WHERE upi_id = ?`,
     ),
     resetPinFailures: db.prepare(
-      `UPDATE users SET failed_pin_attempts = 0, locked_until = NULL WHERE upi_id = ?`,
+      `UPDATE accounts SET failed_pin_attempts = 0, locked_until = NULL WHERE upi_id = ?`,
     ),
-    setPinAttempts: db.prepare(
-      `UPDATE users SET failed_pin_attempts = ? WHERE upi_id = ?`,
-    ),
-    setPinLock: db.prepare(
-      `UPDATE users SET failed_pin_attempts = ?, locked_until = ? WHERE upi_id = ?`,
-    ),
-    debit: db.prepare(
-      `UPDATE users SET balance_paise = balance_paise - ? WHERE upi_id = ?`,
-    ),
-    credit: db.prepare(
-      `UPDATE users SET balance_paise = balance_paise + ? WHERE upi_id = ?`,
-    ),
+    setPinAttempts: db.prepare(`UPDATE accounts SET failed_pin_attempts = ? WHERE upi_id = ?`),
+    setPinLock: db.prepare(`UPDATE accounts SET failed_pin_attempts = ?, locked_until = ? WHERE upi_id = ?`),
+    debit: db.prepare('UPDATE accounts SET balance_paise = balance_paise - ? WHERE upi_id = ?'),
+    credit: db.prepare('UPDATE accounts SET balance_paise = balance_paise + ? WHERE upi_id = ?'),
     insertTxn: db.prepare(
       `INSERT INTO transactions (id, from_upi, to_upi, amount_paise, note, status, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
     ),
     txnsForUser: db.prepare(
-      `SELECT * FROM transactions
-       WHERE from_upi = ? OR to_upi = ?
-       ORDER BY rowid DESC`,
+      `SELECT * FROM transactions WHERE from_upi = ? OR to_upi = ? ORDER BY rowid DESC`,
     ),
     insertRequest: db.prepare(
       `INSERT INTO payment_requests (id, from_upi, to_upi, amount_paise, note, status, created_at)
        VALUES (?, ?, ?, ?, ?, 'PENDING', ?)`,
     ),
-    getRequest: db.prepare(`SELECT * FROM payment_requests WHERE id = ?`),
-    requestsIncoming: db.prepare(
-      `SELECT * FROM payment_requests WHERE to_upi = ? ORDER BY rowid DESC`,
-    ),
-    requestsOutgoing: db.prepare(
-      `SELECT * FROM payment_requests WHERE from_upi = ? ORDER BY rowid DESC`,
-    ),
+    getRequest: db.prepare('SELECT * FROM payment_requests WHERE id = ?'),
+    requestsIncoming: db.prepare('SELECT * FROM payment_requests WHERE to_upi = ? ORDER BY rowid DESC'),
+    requestsOutgoing: db.prepare('SELECT * FROM payment_requests WHERE from_upi = ? ORDER BY rowid DESC'),
     resolveRequest: db.prepare(
-      `UPDATE payment_requests SET status = ?, txn_id = ?, resolved_at = ? WHERE id = ?`,
+      'UPDATE payment_requests SET status = ?, txn_id = ?, resolved_at = ? WHERE id = ?',
     ),
   };
 
-  /** Run `fn` inside a database transaction; roll back if it throws. */
   function inTransaction(fn) {
     db.exec('BEGIN');
     try {
-      const result = fn();
+      const r = fn();
       db.exec('COMMIT');
-      return result;
+      return r;
     } catch (err) {
       db.exec('ROLLBACK');
       throw err;
     }
   }
 
-  function createUser({ name, phone, pin, openingBalancePaise = 0 }) {
-    if (!name || !String(name).trim()) {
-      throw new ApiError(400, 'name is required');
-    }
-    if (!Number.isInteger(openingBalancePaise) || openingBalancePaise < 0) {
-      throw new ApiError(400, 'openingBalance must be a non-negative amount');
-    }
-    const pinHash = hashPin(pin); // validates format + throws ApiError(400) if bad
+  /* ---------------- Banks & accounts ---------------- */
 
-    let upiId = generateUpiId(name);
-    while (stmts.getUser.get(upiId)) upiId = generateUpiId(name);
+  function getBanks() {
+    return stmts.banks.all();
+  }
 
-    const createdAt = new Date().toISOString();
-    stmts.insertUser.run(
-      upiId,
-      String(name).trim(),
-      phone ? String(phone) : null,
-      openingBalancePaise,
-      pinHash,
-      createdAt,
-    );
-    return toUser(stmts.getUser.get(upiId));
+  function getBank(id) {
+    return getBanks().find((b) => b.id === id) || null;
+  }
+
+  /** Accounts linked to a phone number (for sign-up / login). */
+  function getAccountsByPhone(phone) {
+    return stmts.accountsByPhone.all(String(phone || '')).map(toAccount);
   }
 
   function getUser(upiId) {
-    return toUser(stmts.getUser.get(upiId)) || null;
+    return toAccount(stmts.getAccount.get(upiId)) || null;
   }
 
   function requireUser(upiId, label) {
-    const user = getUser(upiId);
-    if (!user) throw new ApiError(404, `${label} '${upiId}' not found`);
-    return user;
+    const u = getUser(upiId);
+    if (!u) throw new ApiError(404, `${label} '${upiId}' not found`);
+    return u;
   }
 
   /**
-   * Authorise a payment with the payer's PIN, enforcing a lockout after too
-   * many consecutive wrong attempts.
-   *
-   * This runs OUTSIDE the money-movement transaction and commits its own
-   * bookkeeping immediately — otherwise a failed payment would roll back the
-   * very failed-attempt counter the lockout depends on.
+   * "Claim" a bank account: set its UPI PIN and mark it active. This is how a
+   * user signs up — after this they can pay from the account.
    */
+  function claimAccount(upiId, pin) {
+    const account = requireUser(upiId, 'account');
+    if (account.claimed) {
+      throw new ApiError(409, 'this account is already set up; just log in');
+    }
+    const pinHash = hashPin(pin); // validates 4-6 digits
+    stmts.claim.run(pinHash, upiId);
+    return getUser(upiId);
+  }
+
+  /** Test/helper: add an extra bank account (unclaimed). */
+  function addAccount({ upiId, bankId, accountNumber, holderName, phone, balancePaise = 0 }) {
+    if (!getBank(bankId)) throw new ApiError(400, `unknown bank '${bankId}'`);
+    if (!Number.isInteger(balancePaise) || balancePaise < 0) {
+      throw new ApiError(400, 'balance must be a non-negative amount');
+    }
+    stmts.insertAccount.run(
+      upiId, bankId, String(accountNumber), String(holderName), String(phone),
+      balancePaise, new Date().toISOString(),
+    );
+    return getUser(upiId);
+  }
+
+  /* ---------------- PIN authorisation + lockout ---------------- */
+
   function authorizePin(upiId, pin) {
     const auth = stmts.getAuth.get(upiId);
-    if (!auth.pin_hash) return; // legacy account with no PIN set
+    if (!auth.pin_hash) {
+      throw new ApiError(403, 'this account is not activated; set a UPI PIN first');
+    }
 
     const now = new Date();
-
-    // If a lock is in effect, block regardless of the PIN.
     if (auth.locked_until) {
       const until = new Date(auth.locked_until);
       if (until > now) {
         const mins = Math.ceil((until - now) / 60000);
-        throw new ApiError(
-          423,
-          `account locked after too many wrong PIN attempts; try again in ${mins} minute(s)`,
-        );
+        throw new ApiError(423, `account locked after too many wrong PIN attempts; try again in ${mins} minute(s)`);
       }
-      // Lock has expired — start fresh.
       stmts.resetPinFailures.run(upiId);
       auth.failed_pin_attempts = 0;
     }
@@ -249,26 +264,18 @@ export function createStore({
       return;
     }
 
-    // Wrong PIN: record the attempt and possibly lock.
     const attempts = auth.failed_pin_attempts + 1;
     if (attempts >= maxPinAttempts) {
       const lockedUntil = new Date(now.getTime() + lockMs).toISOString();
       stmts.setPinLock.run(attempts, lockedUntil, upiId);
-      throw new ApiError(
-        423,
-        `too many wrong PIN attempts; account locked for ${Math.round(lockMs / 60000)} minute(s)`,
-      );
+      throw new ApiError(423, `too many wrong PIN attempts; account locked for ${Math.round(lockMs / 60000)} minute(s)`);
     }
     stmts.setPinAttempts.run(attempts, upiId);
-    const left = maxPinAttempts - attempts;
-    throw new ApiError(401, `incorrect PIN; ${left} attempt(s) left before lockout`);
+    throw new ApiError(401, `incorrect PIN; ${maxPinAttempts - attempts} attempt(s) left before lockout`);
   }
 
-  /**
-   * Move money from one account to another. Validates and authorises up front,
-   * then applies the debit, credit and ledger insert inside a single DB
-   * transaction so a balance can never be left half-updated.
-   */
+  /* ---------------- Money movement ---------------- */
+
   function transfer({ fromUpiId, toUpiId, amountPaise, note, pin }) {
     if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
       throw new ApiError(400, 'amount must be a positive value');
@@ -277,18 +284,15 @@ export function createStore({
       throw new ApiError(400, 'cannot transfer to the same account');
     }
 
-    // Existence + PIN/lockout checks happen before (and outside) the money
-    // transaction. Their bookkeeping must persist even if the payment fails.
     requireUser(fromUpiId, 'payer');
     requireUser(toUpiId, 'payee');
-    authorizePin(fromUpiId, pin);
+    authorizePin(fromUpiId, pin); // persists its own bookkeeping outside the txn
 
     return inTransaction(() => {
       const payer = requireUser(fromUpiId, 'payer');
       if (payer.balancePaise < amountPaise) {
         throw new ApiError(422, 'insufficient balance');
       }
-
       stmts.debit.run(amountPaise, fromUpiId);
       stmts.credit.run(amountPaise, toUpiId);
 
@@ -301,27 +305,17 @@ export function createStore({
         status: 'SUCCESS',
         createdAt: new Date().toISOString(),
       };
-      stmts.insertTxn.run(
-        txn.id,
-        txn.from,
-        txn.to,
-        txn.amountPaise,
-        txn.note,
-        txn.status,
-        txn.createdAt,
-      );
+      stmts.insertTxn.run(txn.id, txn.from, txn.to, txn.amountPaise, txn.note, txn.status, txn.createdAt);
       return txn;
     });
   }
 
-  /** All transactions this account was a party to, newest first. */
   function getTransactions(upiId) {
     return stmts.txnsForUser.all(upiId, upiId).map(toTxn);
   }
 
   /* ---------------- Money requests ("collect") ---------------- */
 
-  /** Create a request asking `toUpiId` (the payer) to pay `fromUpiId`. */
   function createRequest({ fromUpiId, toUpiId, amountPaise, note }) {
     if (!Number.isInteger(amountPaise) || amountPaise <= 0) {
       throw new ApiError(400, 'amount must be a positive value');
@@ -332,31 +326,18 @@ export function createStore({
     requireUser(fromUpiId, 'requester');
     requireUser(toUpiId, 'payer');
 
-    const request = {
-      id: randomUUID(),
-      from: fromUpiId,
-      to: toUpiId,
-      amountPaise,
-      note: note ? String(note) : null,
-      status: 'PENDING',
-      createdAt: new Date().toISOString(),
+    const req = {
+      id: randomUUID(), from: fromUpiId, to: toUpiId, amountPaise,
+      note: note ? String(note) : null, status: 'PENDING', createdAt: new Date().toISOString(),
     };
-    stmts.insertRequest.run(
-      request.id,
-      request.from,
-      request.to,
-      request.amountPaise,
-      request.note,
-      request.createdAt,
-    );
-    return toRequest(stmts.getRequest.get(request.id));
+    stmts.insertRequest.run(req.id, req.from, req.to, req.amountPaise, req.note, req.createdAt);
+    return toRequest(stmts.getRequest.get(req.id));
   }
 
   function getRequest(id) {
     return toRequest(stmts.getRequest.get(id)) || null;
   }
 
-  /** Requests addressed to this user (incoming) and raised by them (outgoing). */
   function getRequestsForUser(upiId) {
     return {
       incoming: stmts.requestsIncoming.all(upiId).map(toRequest),
@@ -364,30 +345,20 @@ export function createStore({
     };
   }
 
-  /**
-   * Approve a pending request: the payer (to_upi) pays the requester (from_upi)
-   * using their PIN. Reuses `transfer`, so PIN + lockout + balance rules apply.
-   */
   function approveRequest(id, pin) {
     const req = stmts.getRequest.get(id);
     if (!req) throw new ApiError(404, `request '${id}' not found`);
     if (req.status !== 'PENDING') {
       throw new ApiError(409, `request already ${req.status.toLowerCase()}`);
     }
-
     const txn = transfer({
-      fromUpiId: req.to_upi, // payer approves and pays
-      toUpiId: req.from_upi, // requester receives
-      amountPaise: req.amount_paise,
-      note: req.note,
-      pin,
+      fromUpiId: req.to_upi, toUpiId: req.from_upi,
+      amountPaise: req.amount_paise, note: req.note, pin,
     });
-
     stmts.resolveRequest.run('APPROVED', txn.id, new Date().toISOString(), id);
     return { request: toRequest(stmts.getRequest.get(id)), transaction: txn };
   }
 
-  /** Decline a pending request without paying. */
   function declineRequest(id) {
     const req = stmts.getRequest.get(id);
     if (!req) throw new ApiError(404, `request '${id}' not found`);
@@ -399,7 +370,8 @@ export function createStore({
   }
 
   return {
-    createUser, getUser, requireUser, transfer, getTransactions,
+    getBanks, getBank, getAccountsByPhone, getUser, requireUser, claimAccount, addAccount,
+    transfer, getTransactions,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,
   };

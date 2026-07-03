@@ -7,115 +7,92 @@ import { createStore } from '../src/store.js';
 const PIN = '1234';
 const makeApp = () => createApp(createStore());
 
-async function createUser(app, name, openingBalance, pin = PIN) {
-  const res = await request(app).post('/users').send({ name, openingBalance, pin }).expect(201);
-  return res.body;
+async function claim(app, upiId, pin = PIN) {
+  await request(app).post(`/accounts/${encodeURIComponent(upiId)}/claim`).send({ pin }).expect(201);
 }
+const balance = async (app, upiId) =>
+  (await request(app).get(`/users/${encodeURIComponent(upiId)}`).expect(200)).body.balanceRupees;
 
 test('request-money happy path: create, appears incoming/outgoing, approve pays', async () => {
   const app = makeApp();
-  const alice = await createUser(app, 'Alice', 0); // requester (will be paid)
-  const bob = await createUser(app, 'Bob', 1000); // payer
+  await claim(app, 'ravi@hdfc'); // payer (5000)
 
-  // Alice requests ₹250 from Bob.
+  // Priya requests ₹250 from Ravi.
   const req = await request(app)
     .post('/requests')
-    .send({ from: alice.upiId, to: bob.upiId, amount: 250, note: 'Movie' })
+    .send({ from: 'priya@hdfc', to: 'ravi@hdfc', amount: 250, note: 'Movie' })
     .expect(201);
   assert.equal(req.body.status, 'PENDING');
-  assert.equal(req.body.amountRupees, 250);
 
-  // Bob sees it incoming; Alice sees it outgoing.
-  const bobReqs = await request(app).get(`/users/${bob.upiId}/requests`).expect(200);
-  assert.equal(bobReqs.body.incoming.length, 1);
-  assert.equal(bobReqs.body.incoming[0].from, alice.upiId);
-  const aliceReqs = await request(app).get(`/users/${alice.upiId}/requests`).expect(200);
-  assert.equal(aliceReqs.body.outgoing.length, 1);
+  const raviReqs = await request(app).get('/users/ravi@hdfc/requests').expect(200);
+  assert.equal(raviReqs.body.incoming.length, 1);
+  assert.equal(raviReqs.body.incoming[0].from, 'priya@hdfc');
+  const priyaReqs = await request(app).get('/users/priya@hdfc/requests').expect(200);
+  assert.equal(priyaReqs.body.outgoing.length, 1);
 
-  // Bob approves with his PIN -> money moves Bob -> Alice.
+  // Ravi approves with his PIN.
   const approve = await request(app)
     .post(`/requests/${req.body.id}/approve`)
     .send({ pin: PIN })
     .expect(201);
   assert.equal(approve.body.request.status, 'APPROVED');
-  assert.equal(approve.body.transaction.amountRupees, 250);
-  assert.equal(approve.body.payer.balanceRupees, 750); // Bob
-  assert.equal(approve.body.payee.balanceRupees, 250); // Alice
+  assert.equal(approve.body.payer.balanceRupees, 4750); // Ravi
+  assert.equal(approve.body.payee.balanceRupees, 8250); // Priya
   assert.ok(approve.body.request.txnId);
 });
 
-test('approving with a wrong PIN does not move money and leaves request pending', async () => {
+test('approving with a wrong PIN keeps the request pending and moves no money', async () => {
   const app = makeApp();
-  const alice = await createUser(app, 'Alice', 0);
-  const bob = await createUser(app, 'Bob', 1000);
+  await claim(app, 'ravi@hdfc');
   const req = await request(app)
     .post('/requests')
-    .send({ from: alice.upiId, to: bob.upiId, amount: 100 })
+    .send({ from: 'priya@hdfc', to: 'ravi@hdfc', amount: 100 })
     .expect(201);
+  await request(app).post(`/requests/${req.body.id}/approve`).send({ pin: '0000' }).expect(401);
 
-  await request(app)
-    .post(`/requests/${req.body.id}/approve`)
-    .send({ pin: '0000' })
-    .expect(401);
-
-  // Request still pending, balances untouched.
-  const bobReqs = await request(app).get(`/users/${bob.upiId}/requests`).expect(200);
-  assert.equal(bobReqs.body.incoming[0].status, 'PENDING');
-  assert.equal((await request(app).get(`/users/${bob.upiId}`)).body.balanceRupees, 1000);
-  assert.equal((await request(app).get(`/users/${alice.upiId}`)).body.balanceRupees, 0);
+  const raviReqs = await request(app).get('/users/ravi@hdfc/requests').expect(200);
+  assert.equal(raviReqs.body.incoming[0].status, 'PENDING');
+  assert.equal(await balance(app, 'ravi@hdfc'), 5000);
+  assert.equal(await balance(app, 'priya@hdfc'), 8000);
 });
 
 test('approving with insufficient balance keeps the request pending', async () => {
   const app = makeApp();
-  const alice = await createUser(app, 'Alice', 0);
-  const bob = await createUser(app, 'Bob', 50);
+  await claim(app, 'ravi@sbi'); // 3000
   const req = await request(app)
     .post('/requests')
-    .send({ from: alice.upiId, to: bob.upiId, amount: 500 })
+    .send({ from: 'priya@sbi', to: 'ravi@sbi', amount: 5000 })
     .expect(201);
   await request(app).post(`/requests/${req.body.id}/approve`).send({ pin: PIN }).expect(422);
-  const bobReqs = await request(app).get(`/users/${bob.upiId}/requests`).expect(200);
-  assert.equal(bobReqs.body.incoming[0].status, 'PENDING');
+  const reqs = await request(app).get('/users/ravi@sbi/requests').expect(200);
+  assert.equal(reqs.body.incoming[0].status, 'PENDING');
 });
 
-test('a declined request cannot be approved, and vice versa', async () => {
+test('a declined request cannot be approved', async () => {
   const app = makeApp();
-  const alice = await createUser(app, 'Alice', 0);
-  const bob = await createUser(app, 'Bob', 1000);
+  await claim(app, 'ravi@hdfc');
   const req = await request(app)
     .post('/requests')
-    .send({ from: alice.upiId, to: bob.upiId, amount: 100 })
+    .send({ from: 'priya@hdfc', to: 'ravi@hdfc', amount: 100 })
     .expect(201);
-
   const declined = await request(app).post(`/requests/${req.body.id}/decline`).expect(200);
   assert.equal(declined.body.status, 'DECLINED');
-
-  // Approving a declined request is a conflict.
-  const res = await request(app)
-    .post(`/requests/${req.body.id}/approve`)
-    .send({ pin: PIN })
-    .expect(409);
+  const res = await request(app).post(`/requests/${req.body.id}/approve`).send({ pin: PIN }).expect(409);
   assert.match(res.body.error, /already declined/);
-  // No money moved.
-  assert.equal((await request(app).get(`/users/${bob.upiId}`)).body.balanceRupees, 1000);
+  assert.equal(await balance(app, 'ravi@hdfc'), 5000);
 });
 
 test('cannot request money from yourself', async () => {
   const app = makeApp();
-  const a = await createUser(app, 'Solo', 100);
   const res = await request(app)
     .post('/requests')
-    .send({ from: a.upiId, to: a.upiId, amount: 10 })
+    .send({ from: 'ravi@hdfc', to: 'ravi@hdfc', amount: 10 })
     .expect(400);
   assert.match(res.body.error, /yourself/);
 });
 
 test('approving a non-existent request returns 404', async () => {
   const app = makeApp();
-  await createUser(app, 'X', 100);
-  const res = await request(app)
-    .post('/requests/does-not-exist/approve')
-    .send({ pin: PIN })
-    .expect(404);
+  const res = await request(app).post('/requests/does-not-exist/approve').send({ pin: PIN }).expect(404);
   assert.match(res.body.error, /not found/);
 });

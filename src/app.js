@@ -21,12 +21,30 @@ export function createApp(store) {
   // distinct paths, so they take priority over static assets.
   app.use(express.static(PUBLIC_DIR));
 
+  const maskAccount = (n) => `••••${String(n).slice(-4)}`;
+
   const serializeUser = (u) => ({
     upiId: u.upiId,
-    name: u.name,
+    name: u.holderName, // the bank account holder is the display name
+    holderName: u.holderName,
     phone: u.phone,
+    bankId: u.bankId,
+    bankName: u.bankName,
+    accountMasked: maskAccount(u.accountNumber),
+    claimed: u.claimed,
     balanceRupees: paiseToRupees(u.balancePaise),
     createdAt: u.createdAt,
+  });
+
+  // Summary shown during sign-up / login (no balance-moving fields).
+  const serializeAccountSummary = (a) => ({
+    upiId: a.upiId,
+    holderName: a.holderName,
+    bankName: a.bankName,
+    bankId: a.bankId,
+    accountMasked: maskAccount(a.accountNumber),
+    balanceRupees: paiseToRupees(a.balancePaise),
+    claimed: a.claimed,
   });
 
   const serializeTxn = (t) => ({
@@ -59,15 +77,24 @@ export function createApp(store) {
     res.json({ status: 'ok' });
   });
 
-  // Create a user (wallet). openingBalance is in rupees.
-  app.post('/users', (req, res) => {
-    const { name, phone, pin, openingBalance } = req.body ?? {};
-    const openingBalancePaise = rupeesToPaise(openingBalance ?? 0);
-    if (Number.isNaN(openingBalancePaise)) {
-      throw new ApiError(400, 'openingBalance must be a number');
-    }
-    const user = store.createUser({ name, phone, pin, openingBalancePaise });
-    res.status(201).json(serializeUser(user));
+  // List the (dummy) banks.
+  app.get('/banks', (_req, res) => {
+    res.json({ banks: store.getBanks() });
+  });
+
+  // Find the bank accounts linked to a phone number (sign-up / login step 1).
+  app.get('/accounts', (req, res) => {
+    const phone = String(req.query.phone ?? '').trim();
+    if (!phone) throw new ApiError(400, 'phone is required');
+    const accounts = store.getAccountsByPhone(phone).map(serializeAccountSummary);
+    res.json({ phone, accounts });
+  });
+
+  // Claim a bank account by setting a UPI PIN (sign-up step 2).
+  app.post('/accounts/:upiId/claim', (req, res) => {
+    const { pin } = req.body ?? {};
+    const account = store.claimAccount(req.params.upiId, pin);
+    res.status(201).json(serializeUser(account));
   });
 
   // Look up a user by UPI ID.
@@ -84,7 +111,7 @@ export function createApp(store) {
       const { amount, note } = req.query;
       const upiUri = buildUpiUri({
         pa: user.upiId,
-        pn: user.name,
+        pn: user.holderName,
         am: amount != null && amount !== '' ? Number(amount) : undefined,
         tn: note,
       });

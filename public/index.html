@@ -20,30 +20,21 @@
       </header>
 
       <div class="card">
-        <h2>Create an account</h2>
-        <form id="form-create">
-          <label>Your name
-            <input name="name" placeholder="e.g. Nilay" required />
+        <h2>Sign in with your phone</h2>
+        <form id="form-phone">
+          <label>Phone number
+            <input name="phone" type="tel" inputmode="numeric" autocomplete="off"
+                   placeholder="9810000001" required />
           </label>
-          <label>Opening balance (₹)
-            <input name="openingBalance" type="number" min="0" step="0.01" value="1000" />
-          </label>
-          <label>Set a payment PIN (4–6 digits)
-            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
-                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
-          </label>
-          <button type="submit" class="btn primary">Create wallet</button>
+          <button type="submit" class="btn primary">Find my accounts</button>
         </form>
+        <p class="demo-contacts">Demo numbers: <code>9810000001</code> (Ravi) ·
+          <code>9820000002</code> (Priya)</p>
       </div>
 
-      <div class="card muted">
-        <h2>Already have a UPI ID?</h2>
-        <form id="form-login">
-          <label>UPI ID
-            <input name="upiId" placeholder="name1234@upiclone" required />
-          </label>
-          <button type="submit" class="btn">Log in</button>
-        </form>
+      <div id="account-picker" class="card" hidden>
+        <h2>Your bank accounts</h2>
+        <div id="account-list" class="accounts"></div>
       </div>
     </section>
 
@@ -53,6 +44,7 @@
         <div>
           <p class="greeting">Hi, <span id="home-name">—</span></p>
           <p class="upi-id" id="home-upiid">—</p>
+          <p class="upi-id home-bank" id="home-bank">—</p>
         </div>
         <button class="link-btn" id="btn-logout">Switch</button>
       </header>
@@ -121,7 +113,7 @@
         <h2>Ask for money</h2>
         <form id="form-request">
           <label>Who should pay you? (their UPI ID)
-            <input name="to" placeholder="ravi0001@upiclone" required />
+            <input name="to" placeholder="priya@hdfc" required />
           </label>
           <label>Amount (₹)
             <input name="amount" type="number" min="0.01" step="0.01" required />
@@ -160,7 +152,7 @@
         <h2>Payment details</h2>
         <form id="form-pay">
           <label>Pay to (UPI ID or upi:// link)
-            <input name="to" placeholder="bob1234@upiclone" required />
+            <input name="to" placeholder="priya@hdfc" required />
           </label>
           <label>Amount (₹)
             <input name="amount" type="number" min="0.01" step="0.01" required />

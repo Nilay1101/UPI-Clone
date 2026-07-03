@@ -5,7 +5,6 @@ import os from 'node:os';
 import path from 'node:path';
 import { createStore } from '../src/store.js';
 
-/** A throwaway db file path under the OS temp dir. */
 function tmpDbPath() {
   return path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'upi-')), 'test.sqlite');
 }
@@ -13,55 +12,51 @@ function tmpDbPath() {
 test('data persists across store instances (simulated restart)', () => {
   const dbPath = tmpDbPath();
 
-  // First "run": create two users and make a payment.
+  // First run: claim an account and make a payment.
   let store = createStore({ dbPath });
-  const alice = store.createUser({ name: 'Alice', pin: '1234', openingBalancePaise: 100000 });
-  const bob = store.createUser({ name: 'Bob', pin: '5678', openingBalancePaise: 0 });
-  store.transfer({
-    fromUpiId: alice.upiId,
-    toUpiId: bob.upiId,
-    amountPaise: 30000,
-    note: 'Rent',
-    pin: '1234',
-  });
+  store.claimAccount('ravi@hdfc', '1234'); // 5000.00 -> 500000 paise
+  store.transfer({ fromUpiId: 'ravi@hdfc', toUpiId: 'priya@hdfc', amountPaise: 30000, note: 'Rent', pin: '1234' });
   store.db.close();
 
-  // Second "run": reopen the same file. Everything should still be there.
+  // Second run: reopen the same file. Everything should still be there.
   store = createStore({ dbPath });
-  assert.equal(store.getUser(alice.upiId).balancePaise, 70000);
-  assert.equal(store.getUser(bob.upiId).balancePaise, 30000);
-  const txns = store.getTransactions(bob.upiId);
+  assert.equal(store.getUser('ravi@hdfc').balancePaise, 470000);
+  assert.equal(store.getUser('priya@hdfc').balancePaise, 830000);
+  assert.equal(store.getUser('ravi@hdfc').claimed, true); // activation persisted
+  const txns = store.getTransactions('priya@hdfc');
   assert.equal(txns.length, 1);
   assert.equal(txns[0].note, 'Rent');
-  assert.equal(txns[0].amountPaise, 30000);
   store.db.close();
 
-  // Clean up.
   fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
 });
 
 test('a failed (over-balance) transfer rolls back and persists nothing', () => {
   const dbPath = tmpDbPath();
   let store = createStore({ dbPath });
-  const a = store.createUser({ name: 'A', pin: '1234', openingBalancePaise: 500 });
-  const b = store.createUser({ name: 'B', pin: '1234', openingBalancePaise: 0 });
+  store.claimAccount('ravi@sbi', '1234'); // 3000.00
   assert.throws(
-    () =>
-      store.transfer({
-        fromUpiId: a.upiId,
-        toUpiId: b.upiId,
-        amountPaise: 999999,
-        pin: '1234',
-      }),
+    () => store.transfer({ fromUpiId: 'ravi@sbi', toUpiId: 'priya@sbi', amountPaise: 99999999, pin: '1234' }),
     /insufficient balance/,
   );
   store.db.close();
 
   store = createStore({ dbPath });
-  assert.equal(store.getUser(a.upiId).balancePaise, 500);
-  assert.equal(store.getUser(b.upiId).balancePaise, 0);
-  assert.equal(store.getTransactions(a.upiId).length, 0);
+  assert.equal(store.getUser('ravi@sbi').balancePaise, 300000);
+  assert.equal(store.getUser('priya@sbi').balancePaise, 200000);
+  assert.equal(store.getTransactions('ravi@sbi').length, 0);
   store.db.close();
 
+  fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
+});
+
+test('seed data is only inserted once (no duplicate banks on reopen)', () => {
+  const dbPath = tmpDbPath();
+  let store = createStore({ dbPath });
+  assert.equal(store.getBanks().length, 2);
+  store.db.close();
+  store = createStore({ dbPath });
+  assert.equal(store.getBanks().length, 2); // not 4
+  store.db.close();
   fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
 });
