@@ -208,3 +208,16 @@ body { flex-direction: column; align-items: center; }
 .btn.danger { background: #fde8e8; color: var(--red); }
 .req-pin { display: flex; gap: 8px; margin-top: 12px; }
 .req-pin input { margin-top: 0; }
+
+/* ---------- Account picker (added for GPay-style onboarding) ---------- */
+.accounts { display: flex; flex-direction: column; gap: 10px; }
+.acct { border: 1px solid var(--line); border-radius: 14px; padding: 14px; }
+.acct-top { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
+.acct-bank { font-weight: 700; font-size: 15px; }
+.acct-bal { font-weight: 700; font-size: 14px; color: var(--violet); white-space: nowrap; }
+.acct-sub { color: var(--muted); font-size: 12px; margin: 4px 0 0; word-break: break-all; }
+.acct-claim { display: flex; gap: 8px; margin-top: 12px; }
+.acct-claim input { margin-top: 0; }
+.acct .btn { margin-top: 12px; }
+.acct-claim .btn { margin-top: 0; white-space: nowrap; width: auto; padding-left: 16px; padding-right: 16px; }
+.home-bank { font-size: 12px; }
