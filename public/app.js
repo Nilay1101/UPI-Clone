@@ -36,6 +36,8 @@ function show(screenId) {
   if (screenId !== 'screen-pay') stopScanner();
   if (screenId === 'screen-history') loadHistory();
   if (screenId === 'screen-request') loadRequests();
+  if (screenId === 'screen-pay') populatePayFrom();
+  if (screenId !== 'screen-home') $('#account-switcher').hidden = true;
 }
 
 const rupees = (n) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -164,6 +166,93 @@ $('#btn-refresh').addEventListener('click', () =>
   refreshBalance().then(() => toast('Balance updated', 'ok')).catch((e) => toast(e.message, 'err')),
 );
 
+/* ---------------- Multiple banks per profile ---------------- */
+// All bank accounts linked to the logged-in phone number.
+async function myAccounts() {
+  const { accounts } = await api(`/accounts?phone=${encodeURIComponent(state.user.phone)}`);
+  return accounts;
+}
+
+$('#btn-switch-account').addEventListener('click', () => {
+  const panel = $('#account-switcher');
+  const willShow = panel.hidden;
+  panel.hidden = !willShow;
+  if (willShow) loadSwitcher();
+});
+
+async function loadSwitcher() {
+  const list = $('#switcher-list');
+  list.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const accounts = await myAccounts();
+    list.innerHTML = '';
+    for (const a of accounts) {
+      const isActive = a.upiId === state.user.upiId;
+      const el = document.createElement('div');
+      el.className = 'acct' + (isActive ? ' active' : '');
+      let action;
+      if (isActive) action = '<span class="acct-tag">Active</span>';
+      else if (a.claimed) action = `<button class="btn" data-use="${escapeAttr(a.upiId)}">Use this</button>`;
+      else action = `<div class="acct-claim">
+          <input class="claim-pin" type="password" inputmode="numeric" autocomplete="off"
+                 minlength="4" maxlength="6" placeholder="Set a PIN to add" />
+          <button class="btn primary" data-add="${escapeAttr(a.upiId)}">Add</button>
+        </div>`;
+      el.innerHTML = `
+        <div class="acct-top">
+          <span class="acct-bank">${escapeHtml(a.bankName)}</span>
+          <span class="acct-bal">₹${rupees(a.balanceRupees)}</span>
+        </div>
+        <p class="acct-sub">${escapeHtml(a.accountMasked)} · ${escapeHtml(a.upiId)}</p>
+        ${action}`;
+      list.appendChild(el);
+    }
+  } catch (err) {
+    list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
+}
+
+$('#switcher-list').addEventListener('click', async (e) => {
+  const use = e.target.closest('[data-use]');
+  const add = e.target.closest('[data-add]');
+  try {
+    if (use) {
+      await loadUser(use.dataset.use);
+      $('#account-switcher').hidden = true;
+      toast('Switched account', 'ok');
+    } else if (add) {
+      const pin = add.closest('.acct-claim').querySelector('.claim-pin').value;
+      const user = await api(`/accounts/${encodeURIComponent(add.dataset.add)}/claim`, {
+        method: 'POST',
+        body: JSON.stringify({ pin }),
+      });
+      toast(`Added ${user.bankName}`, 'ok');
+      await loadUser(user.upiId);
+      $('#account-switcher').hidden = true;
+    }
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
+
+// Fill the "Pay from" dropdown with your activated accounts (default = active).
+async function populatePayFrom() {
+  const sel = $('#pay-from');
+  try {
+    const accounts = (await myAccounts()).filter((a) => a.claimed);
+    sel.innerHTML = '';
+    for (const a of accounts) {
+      const opt = document.createElement('option');
+      opt.value = a.upiId;
+      opt.textContent = `${a.bankName} ${a.accountMasked} — ₹${rupees(a.balanceRupees)}`;
+      if (a.upiId === state.user.upiId) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch {
+    sel.innerHTML = `<option value="${escapeAttr(state.user.upiId)}">${escapeHtml(state.user.upiId)}</option>`;
+  }
+}
+
 /* ---------------- Navigation ---------------- */
 $$('[data-go]').forEach((btn) => btn.addEventListener('click', () => show(btn.dataset.go)));
 
@@ -248,7 +337,7 @@ $('#form-pay').addEventListener('submit', async (e) => {
   const f = new FormData(e.target);
   const to = f.get('to').trim();
   const body = {
-    from: state.user.upiId,
+    from: f.get('from') || state.user.upiId, // chosen "pay from" account
     amount: Number(f.get('amount')),
     note: f.get('note') || undefined,
     pin: f.get('pin'),
@@ -259,7 +348,8 @@ $('#form-pay').addEventListener('submit', async (e) => {
 
   try {
     const result = await api('/pay', { method: 'POST', body: JSON.stringify(body) });
-    state.user = result.payer;
+    state.user = result.payer; // the account paid from becomes the active one
+    saveSession(result.payer.upiId);
     renderHome();
     e.target.reset();
     $('#qr-result') && ($('#qr-result').hidden = true);

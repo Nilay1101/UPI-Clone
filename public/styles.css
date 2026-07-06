@@ -83,6 +83,23 @@ input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px 
 .link-btn { background: none; border: none; color: var(--violet); font-size: 14px; cursor: pointer; padding: 0; }
 .link-btn.light { color: rgba(255, 255, 255, 0.9); }
 
+/* ---------- Account chip / switcher (home) ---------- */
+.acct-chip {
+  display: flex; align-items: center; gap: 6px; width: 100%;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  padding: 11px 14px; margin-bottom: 20px; cursor: pointer;
+  font-size: 13px; font-weight: 600; color: var(--ink);
+}
+.acct-chip .chev { margin-left: auto; color: var(--muted); }
+.acct.active { border-color: var(--violet); box-shadow: 0 0 0 2px rgba(109, 94, 252, 0.15); }
+.acct-tag { font-size: 11px; font-weight: 700; color: var(--violet); }
+select {
+  width: 100%; margin-top: 6px; padding: 12px 14px;
+  border: 1px solid var(--line); border-radius: 12px; font-size: 15px;
+  color: var(--ink); background: #fff;
+}
+select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(109, 94, 252, 0.15); }
+
 /* ---------- Account picker (sign-in) ---------- */
 .accounts { display: flex; flex-direction: column; gap: 10px; }
 .acct { border: 1px solid var(--line); border-radius: 14px; padding: 14px; }

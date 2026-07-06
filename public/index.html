@@ -44,15 +44,23 @@
         <div>
           <p class="greeting">Hi, <span id="home-name">—</span></p>
           <p class="upi-id" id="home-upiid">—</p>
-          <p class="upi-id home-bank" id="home-bank">—</p>
         </div>
-        <button class="link-btn" id="btn-logout">Switch</button>
+        <button class="link-btn" id="btn-logout">Sign out</button>
       </header>
 
       <div class="balance-card">
         <p class="balance-label">Balance</p>
         <p class="balance-amount">₹<span id="home-balance">0.00</span></p>
         <button class="link-btn light" id="btn-refresh">Refresh</button>
+      </div>
+
+      <button class="acct-chip" id="btn-switch-account">
+        <span id="home-bank">—</span> <span class="chev">▾</span>
+      </button>
+
+      <div id="account-switcher" class="card" hidden>
+        <h2>Your bank accounts</h2>
+        <div id="switcher-list" class="accounts"></div>
       </div>
 
       <div class="actions">
@@ -151,6 +159,9 @@
       <div class="card">
         <h2>Payment details</h2>
         <form id="form-pay">
+          <label>Pay from
+            <select name="from" id="pay-from"></select>
+          </label>
           <label>Pay to (UPI ID or upi:// link)
             <input name="to" placeholder="priya@hdfc" required />
           </label>
