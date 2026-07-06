@@ -53,12 +53,13 @@ banks/accounts:
 
 1. **Sign up by phone**: pick a country code and enter your number → verify a
    **one-time code (OTP)** "sent" to it → the app lists the bank accounts linked
-   to that number → pick one and set a **UPI PIN** ("claiming" the account).
-   Activating an account requires the OTP token, so you can't claim an account
-   just by knowing its number. (No real SMS gateway — the demo shows the code.)
-   Codes are **rate-limited** (a 30-second gap before you can resend, plus a cap
-   per window), and the verify page has a **"Resend code"** button with a
-   countdown.
+   to that number → pick one → the app requests **bank verification** which you
+   approve in your **banking app** → set a **UPI PIN** ("claiming" the account).
+   Activation requires *both* the OTP token *and* an approved bank verification,
+   so you can't claim an account just by knowing its number. (No real SMS/bank
+   gateway — the demo shows the code and provides an "approve" button.) Codes
+   are **rate-limited** (a 30-second resend gap plus a per-window cap), and the
+   verify page has a **"Resend code"** button with a countdown.
 2. Your balance is that **bank account's** balance; payments draw from it. One
    profile can link **several accounts** and choose which to pay from.
 3. A payee shows a **QR code** (a `upi://pay` link) or you enter a UPI ID.
@@ -84,7 +85,9 @@ lock auto-expires.
 | POST   | `/otp/send`                   | "Send" a code: `{ phone }` → `{ devCode }` (sim; rate-limited, 429 if too frequent) |
 | POST   | `/otp/verify`                 | Verify a code: `{ phone, code }` → `{ token }` |
 | GET    | `/accounts?phone=`            | Bank accounts linked to a phone              |
-| POST   | `/accounts/:upiId/claim`      | Activate an account: `{ pin, token }` (OTP token required) |
+| POST   | `/accounts/:upiId/verify-request` | Ask the bank to verify linking: `{ token }` → `{ requestId }` |
+| POST   | `/bank/verify/:requestId/approve` | Approve the request (stands in for the bank app) |
+| POST   | `/accounts/:upiId/claim`      | Activate: `{ pin, token }` (OTP token **and** bank approval required) |
 | GET    | `/users/:upiId`               | Fetch an account + balance                   |
 | GET    | `/users/:upiId/qr`            | Payment QR; optional `?amount=&note=`        |
 | GET    | `/users/:upiId/transactions`  | Transaction history                          |

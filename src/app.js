@@ -105,14 +105,30 @@ export function createApp(store) {
     res.json({ phone, accounts });
   });
 
-  // Claim a bank account by setting a UPI PIN. Requires an OTP token proving
-  // control of the account's phone number — so you can't activate an account
-  // just by knowing its number.
+  // Ask the bank to verify linking this account (needs the OTP token). Returns
+  // a pending request the user approves in their bank app.
+  app.post('/accounts/:upiId/verify-request', (req, res) => {
+    const { token } = req.body ?? {};
+    res.status(201).json(store.requestBankVerification(req.params.upiId, token));
+  });
+
+  // Approve a bank-verification request — simulates the user tapping "approve"
+  // in their bank's app.
+  app.post('/bank/verify/:requestId/approve', (req, res) => {
+    res.json(store.approveBankVerification(req.params.requestId));
+  });
+
+  // Claim a bank account by setting a UPI PIN. Requires (1) an OTP token proving
+  // control of the phone number, and (2) an approved bank verification — so you
+  // can't activate an account just by knowing its number.
   app.post('/accounts/:upiId/claim', (req, res) => {
     const { pin, token } = req.body ?? {};
     const account = store.requireUser(req.params.upiId, 'account');
     if (store.sessionPhone(token) !== account.phone) {
       throw new ApiError(401, 'phone not verified; complete OTP verification first');
+    }
+    if (!store.isBankApproved(req.params.upiId)) {
+      throw new ApiError(403, 'bank verification required; approve the request in your bank app');
     }
     const claimed = store.claimAccount(req.params.upiId, pin);
     res.status(201).json(serializeUser(claimed));

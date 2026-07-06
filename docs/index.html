@@ -78,6 +78,38 @@
       </div>
     </section>
 
+    <!-- ============ BANK VERIFICATION ============ -->
+    <section id="screen-bankverify" class="screen" hidden>
+      <header class="sub-header">
+        <button type="button" class="back" id="btn-bankverify-back">‹</button>
+        <h2>Bank verification</h2>
+      </header>
+
+      <div id="bankverify-pending" class="card bankverify">
+        <div class="bv-icon">🏦</div>
+        <h2>Verifying with <span id="bv-bank">your bank</span></h2>
+        <p class="bv-text">We've sent a verification request to <span id="bv-bank2">your bank</span>.
+          Open your banking app and approve it to securely link this account.</p>
+        <div class="bv-waiting">Waiting for approval…</div>
+        <button class="btn primary" id="btn-bank-approve">Approve in bank app</button>
+        <p class="demo-contacts">In a real app you'd approve a notification inside your bank's
+          app. This button stands in for that.</p>
+      </div>
+
+      <div id="bankverify-approved" class="card" hidden>
+        <div class="bv-icon ok">✓</div>
+        <h2>Verified by <span id="bv-bank3">your bank</span></h2>
+        <p class="bv-text">Set a UPI PIN to finish linking <span id="bv-upi">—</span>.</p>
+        <form id="form-bank-pin">
+          <label>Set a payment PIN (4–6 digits)
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Set PIN &amp; activate</button>
+        </form>
+      </div>
+    </section>
+
     <!-- ============ HOME ============ -->
     <section id="screen-home" class="screen" hidden>
       <header class="home-header">

@@ -7,6 +7,7 @@ import { ApiError } from './errors.js';
 const OTP_TTL_MS = 5 * 60 * 1000; // a code is valid for 5 minutes
 const SESSION_TTL_MS = 30 * 60 * 1000; // a verification token lasts 30 minutes
 const OTP_MAX_ATTEMPTS = 5;
+const BANK_VERIF_TTL_MS = 5 * 60 * 1000; // a bank verification request lasts 5 minutes
 
 /**
  * SQLite-backed data store + core payment logic.
@@ -122,6 +123,7 @@ export function createStore({
   const otps = new Map(); // phone -> { code, expiresAt, attempts }
   const sessions = new Map(); // token -> { phone, expiresAt }
   const otpRates = new Map(); // phone -> { windowStart, count, lastSentAt }
+  const bankVerifs = new Map(); // requestId -> { upiId, status, expiresAt }
 
   // ---- Mappers (DB snake_case -> app camelCase) ----
   const toAccount = (row) =>
@@ -263,6 +265,42 @@ export function createStore({
     const s = sessions.get(token);
     if (!s || s.expiresAt < Date.now()) return null;
     return s.phone;
+  }
+
+  /* ---------------- Bank verification (approve in your bank app) ---------------- */
+
+  /**
+   * Ask the bank to verify linking an account — like GPay pinging your bank via
+   * NPCI. Requires a verified phone (OTP token). Returns a pending request the
+   * user must "approve in their bank app".
+   */
+  function requestBankVerification(upiId, token) {
+    const account = requireUser(upiId, 'account');
+    if (sessionPhone(token) !== account.phone) {
+      throw new ApiError(401, 'phone not verified; complete OTP verification first');
+    }
+    const requestId = randomUUID();
+    bankVerifs.set(requestId, { upiId, status: 'PENDING', expiresAt: Date.now() + BANK_VERIF_TTL_MS });
+    return { requestId, bankName: account.bankName, status: 'PENDING' };
+  }
+
+  /** Approve a pending request — stands in for the user approving in the bank app. */
+  function approveBankVerification(requestId) {
+    const rec = bankVerifs.get(requestId);
+    if (!rec || rec.expiresAt < Date.now()) {
+      throw new ApiError(404, 'verification request not found or expired');
+    }
+    rec.status = 'APPROVED';
+    return { requestId, status: 'APPROVED' };
+  }
+
+  /** Has this account got a live, approved bank verification? */
+  function isBankApproved(upiId) {
+    const now = Date.now();
+    for (const rec of bankVerifs.values()) {
+      if (rec.upiId === upiId && rec.status === 'APPROVED' && rec.expiresAt >= now) return true;
+    }
+    return false;
   }
 
   /* ---------------- Banks & accounts ---------------- */
@@ -448,6 +486,7 @@ export function createStore({
 
   return {
     sendOtp, verifyOtp, sessionPhone,
+    requestBankVerification, approveBankVerification, isBankApproved,
     getBanks, getBank, getAccountsByPhone, getUser, requireUser, claimAccount, addAccount,
     transfer, getTransactions,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,

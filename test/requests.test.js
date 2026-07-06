@@ -11,6 +11,8 @@ async function claim(app, upiId, pin = PIN) {
   const phone = (await request(app).get(`/users/${encodeURIComponent(upiId)}`)).body.phone;
   const { devCode } = (await request(app).post('/otp/send').send({ phone })).body;
   const { token } = (await request(app).post('/otp/verify').send({ phone, code: devCode })).body;
+  const { requestId } = (await request(app).post(`/accounts/${encodeURIComponent(upiId)}/verify-request`).send({ token })).body;
+  await request(app).post(`/bank/verify/${requestId}/approve`).expect(200);
   await request(app).post(`/accounts/${encodeURIComponent(upiId)}/claim`).send({ pin, token }).expect(201);
 }
 const balance = async (app, upiId) =>

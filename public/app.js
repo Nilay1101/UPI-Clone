@@ -6,6 +6,7 @@ const state = {
   otpToken: null, // verification token from OTP (needed to activate accounts)
   pendingPhone: null, // phone being verified during sign-up
   resendTimer: null, // countdown interval for the "Resend code" button
+  link: null, // account being linked via bank verification
 };
 
 /* ---------------- API helper ---------------- */
@@ -197,11 +198,7 @@ function renderAccountPicker(accounts, phone) {
     el.className = 'acct';
     const action = a.claimed
       ? `<button class="btn" data-login="${escapeAttr(a.upiId)}">Log in</button>`
-      : `<div class="acct-claim">
-           <input class="claim-pin" type="password" inputmode="numeric" autocomplete="off"
-                  minlength="4" maxlength="6" placeholder="Set a 4–6 digit PIN" />
-           <button class="btn primary" data-activate="${escapeAttr(a.upiId)}">Activate</button>
-         </div>`;
+      : `<button class="btn primary" data-link="${escapeAttr(a.upiId)}">Link account</button>`;
     el.innerHTML = `
       <div class="acct-top">
         <span class="acct-bank">${escapeHtml(a.bankName)}</span>
@@ -213,25 +210,69 @@ function renderAccountPicker(accounts, phone) {
   }
 }
 
-// Delegate clicks for "Log in" (claimed) and "Activate" (set PIN, then log in).
+// Delegate clicks for "Log in" (claimed) and "Link account" (bank-verify flow).
 $('#account-list').addEventListener('click', async (e) => {
   const login = e.target.closest('[data-login]');
-  const activate = e.target.closest('[data-activate]');
+  const link = e.target.closest('[data-link]');
   try {
-    if (login) {
-      await loadUser(login.dataset.login);
-    } else if (activate) {
-      const pin = activate.closest('.acct-claim').querySelector('.claim-pin').value;
-      const user = await api(`/accounts/${encodeURIComponent(activate.dataset.activate)}/claim`, {
-        method: 'POST',
-        body: JSON.stringify({ pin, token: state.otpToken }),
-      });
-      toast(`Activated ${user.upiId} on ${user.bankName}`, 'ok');
-      await loadUser(user.upiId);
-    }
+    if (login) await loadUser(login.dataset.login);
+    else if (link) await startBankLink(link.dataset.link, false);
   } catch (err) {
     toast(err.message, 'err');
   }
+});
+
+/* ---------------- Bank verification (approve in your bank app) ---------------- */
+// Kick off linking an account: ask the bank to verify, then show the approval screen.
+async function startBankLink(upiId, fromHome) {
+  const res = await api(`/accounts/${encodeURIComponent(upiId)}/verify-request`, {
+    method: 'POST',
+    body: JSON.stringify({ token: state.otpToken }),
+  });
+  state.link = { upiId, requestId: res.requestId, bankName: res.bankName, fromHome };
+  $('#bv-bank').textContent = res.bankName;
+  $('#bv-bank2').textContent = res.bankName;
+  $('#bv-bank3').textContent = res.bankName;
+  $('#bv-upi').textContent = upiId;
+  $('#btn-bank-approve').disabled = false;
+  $('#bankverify-approved').hidden = true;
+  $('#bankverify-pending').hidden = false;
+  $('#form-bank-pin').reset();
+  show('screen-bankverify');
+}
+
+$('#btn-bank-approve').addEventListener('click', async () => {
+  const btn = $('#btn-bank-approve');
+  btn.disabled = true;
+  try {
+    await api(`/bank/verify/${state.link.requestId}/approve`, { method: 'POST' });
+    toast(`Approved by ${state.link.bankName}`, 'ok');
+    $('#bankverify-pending').hidden = true;
+    $('#bankverify-approved').hidden = false;
+  } catch (err) {
+    btn.disabled = false;
+    toast(err.message, 'err');
+  }
+});
+
+$('#form-bank-pin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pin = new FormData(e.target).get('pin');
+  try {
+    const user = await api(`/accounts/${encodeURIComponent(state.link.upiId)}/claim`, {
+      method: 'POST',
+      body: JSON.stringify({ pin, token: state.otpToken }),
+    });
+    toast(`Activated ${user.upiId} on ${user.bankName}`, 'ok');
+    await loadUser(user.upiId);
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
+
+$('#btn-bankverify-back').addEventListener('click', () => {
+  if (state.link && state.link.fromHome) show('screen-home');
+  else { show('screen-onboard'); showOnboardStep('accounts'); }
 });
 
 $('#btn-logout').addEventListener('click', () => {
@@ -275,11 +316,7 @@ async function loadSwitcher() {
       let action;
       if (isActive) action = '<span class="acct-tag">Active</span>';
       else if (a.claimed) action = `<button class="btn" data-use="${escapeAttr(a.upiId)}">Use this</button>`;
-      else action = `<div class="acct-claim">
-          <input class="claim-pin" type="password" inputmode="numeric" autocomplete="off"
-                 minlength="4" maxlength="6" placeholder="Set a PIN to add" />
-          <button class="btn primary" data-add="${escapeAttr(a.upiId)}">Add</button>
-        </div>`;
+      else action = `<button class="btn primary" data-link="${escapeAttr(a.upiId)}">Link account</button>`;
       el.innerHTML = `
         <div class="acct-top">
           <span class="acct-bank">${escapeHtml(a.bankName)}</span>
@@ -296,21 +333,15 @@ async function loadSwitcher() {
 
 $('#switcher-list').addEventListener('click', async (e) => {
   const use = e.target.closest('[data-use]');
-  const add = e.target.closest('[data-add]');
+  const link = e.target.closest('[data-link]');
   try {
     if (use) {
       await loadUser(use.dataset.use);
       $('#account-switcher').hidden = true;
       toast('Switched account', 'ok');
-    } else if (add) {
-      const pin = add.closest('.acct-claim').querySelector('.claim-pin').value;
-      const user = await api(`/accounts/${encodeURIComponent(add.dataset.add)}/claim`, {
-        method: 'POST',
-        body: JSON.stringify({ pin, token: state.otpToken }),
-      });
-      toast(`Added ${user.bankName}`, 'ok');
-      await loadUser(user.upiId);
+    } else if (link) {
       $('#account-switcher').hidden = true;
+      await startBankLink(link.dataset.link, true); // fromHome
     }
   } catch (err) {
     toast(err.message, 'err');

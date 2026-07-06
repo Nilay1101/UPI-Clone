@@ -17,9 +17,18 @@ async function getToken(app, phone) {
   return token;
 }
 
-// Claim (activate) a seeded account: verify the phone by OTP, then set a PIN.
+// Request bank verification for an account and approve it (as the bank app would).
+async function bankApprove(app, upiId, token) {
+  const { requestId } = (
+    await request(app).post(`/accounts/${encodeURIComponent(upiId)}/verify-request`).send({ token }).expect(201)
+  ).body;
+  await request(app).post(`/bank/verify/${requestId}/approve`).expect(200);
+}
+
+// Claim (activate) a seeded account: OTP → bank verification → set a PIN.
 async function claim(app, upiId, pin = PIN) {
   const token = await getToken(app, await phoneOf(app, upiId));
+  await bankApprove(app, upiId, token);
   const res = await request(app)
     .post(`/accounts/${encodeURIComponent(upiId)}/claim`)
     .send({ pin, token })
@@ -104,17 +113,34 @@ test('claiming without OTP verification is rejected', async () => {
     .expect(401);
 });
 
+test('bank verify-request requires a matching OTP token', async () => {
+  const app = makeApp();
+  await request(app).post('/accounts/ravi@hdfc/verify-request').send({}).expect(401);
+  const wrong = await getToken(app, '+919820000002');
+  await request(app).post('/accounts/ravi@hdfc/verify-request').send({ token: wrong }).expect(401);
+});
+
+test('claiming without bank verification is rejected', async () => {
+  const app = makeApp();
+  const token = await getToken(app, '+919810000001');
+  const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: PIN, token }).expect(403);
+  assert.match(res.body.error, /bank verification required/);
+});
+
 test('claiming requires a valid 4-6 digit PIN', async () => {
   const app = makeApp();
   const token = await getToken(app, '+919810000001');
+  await bankApprove(app, 'ravi@hdfc', token);
   const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '12', token }).expect(400);
   assert.match(res.body.error, /pin must be 4 to 6 digits/);
 });
 
 test('an already-claimed account cannot be claimed again', async () => {
   const app = makeApp();
-  // One OTP token, reused for both claim attempts (a second send would be rate-limited).
+  // One OTP token + one bank approval, reused for both claim attempts
+  // (a second OTP send would be rate-limited).
   const token = await getToken(app, '+919810000001');
+  await bankApprove(app, 'ravi@hdfc', token);
   await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: PIN, token }).expect(201);
   const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '5555', token }).expect(409);
   assert.match(res.body.error, /already set up/);

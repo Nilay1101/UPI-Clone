@@ -248,3 +248,12 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 
 .resend { display: block; margin: 14px auto 0; }
 .resend:disabled { color: var(--muted); cursor: default; }
+
+/* ---------- Bank verification ---------- */
+.bankverify { text-align: center; }
+.bv-icon { width: 64px; height: 64px; margin: 4px auto 12px; border-radius: 18px; display: grid; place-items: center; font-size: 32px; background: #eceafe; }
+.bv-icon.ok { background: #e6f6ee; color: var(--green); font-weight: 700; }
+.bv-text { color: var(--muted); font-size: 13px; margin: 0 0 16px; }
+.bv-waiting { color: var(--violet); font-size: 13px; font-weight: 600; margin-bottom: 14px; }
+.bv-waiting::after { content: ''; animation: dots 1.4s steps(4, end) infinite; }
+@keyframes dots { 0% { content: ''; } 25% { content: '.'; } 50% { content: '..'; } 75% { content: '...'; } }
