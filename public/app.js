@@ -88,26 +88,38 @@ async function refreshBalance() {
   renderHome();
 }
 
-/* ---------------- Onboarding (phone → pick bank account) ---------------- */
+/* ---------------- Onboarding: step 1 phone → step 2 pick account ---------------- */
 const escapeAttr = (s) => String(s).replace(/"/g, '&quot;');
+
+// Step navigation between the phone entry and account picker pages.
+function showOnboardStep(step) {
+  $('#onboard-phone').hidden = step !== 'phone';
+  $('#onboard-accounts').hidden = step !== 'accounts';
+}
 
 $('#form-phone').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const phone = new FormData(e.target).get('phone').trim();
+  const cc = $('#country-code').value;
+  const local = new FormData(e.target).get('phone').replace(/\D/g, '');
+  if (!local) return toast('Enter a mobile number', 'err');
+  const full = cc + local;
   try {
-    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(phone)}`);
-    renderAccountPicker(accounts, phone);
+    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(full)}`);
+    $('#onboard-number').textContent = `${cc} ${local}`;
+    renderAccountPicker(accounts, full);
+    showOnboardStep('accounts');
   } catch (err) {
     toast(err.message, 'err');
   }
 });
 
+$('#btn-onboard-back').addEventListener('click', () => showOnboardStep('phone'));
+
 function renderAccountPicker(accounts, phone) {
   const list = $('#account-list');
-  const picker = $('#account-picker');
   if (!accounts.length) {
-    list.innerHTML = `<p class="empty">No accounts linked to ${escapeHtml(phone)}. Try 9810000001 or 9820000002.</p>`;
-    picker.hidden = false;
+    list.innerHTML = `<p class="empty">No accounts are linked to this number in the demo.
+      Go back and try 🇮🇳 9810000001 / 9820000002 or 🇦🇪 501234567 / 509876543.</p>`;
     return;
   }
   list.innerHTML = '';
@@ -130,7 +142,6 @@ function renderAccountPicker(accounts, phone) {
       ${action}`;
     list.appendChild(el);
   }
-  picker.hidden = false;
 }
 
 // Delegate clicks for "Log in" (claimed) and "Activate" (set PIN, then log in).
@@ -157,8 +168,8 @@ $('#account-list').addEventListener('click', async (e) => {
 $('#btn-logout').addEventListener('click', () => {
   clearSession();
   state.user = null;
-  $('#account-picker').hidden = true;
   $('#form-phone').reset();
+  showOnboardStep('phone');
   show('screen-onboard');
 });
 

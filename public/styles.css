@@ -100,6 +100,16 @@ select {
 }
 select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(109, 94, 252, 0.15); }
 
+/* ---------- Phone entry (sign-up step 1) ---------- */
+.phone-row { display: flex; gap: 8px; margin-bottom: 14px; }
+.cc-select {
+  width: auto; margin-top: 0; flex: 0 0 auto; font-weight: 600;
+  padding-right: 10px; background: #fff;
+}
+.phone-row input { margin-top: 0; flex: 1; }
+.onboard-num { color: var(--muted); font-size: 13px; margin: 0 2px 12px; }
+.onboard-num span { color: var(--ink); font-weight: 600; }
+
 /* ---------- Account picker (sign-in) ---------- */
 .accounts { display: flex; flex-direction: column; gap: 10px; }
 .acct { border: 1px solid var(--line); border-radius: 14px; padding: 14px; }

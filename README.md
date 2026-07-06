@@ -35,21 +35,27 @@ paste a `upi://` link or type a UPI ID + amount instead.
 ## Banks & accounts (GPay-style onboarding)
 
 Like Google Pay, money lives in **bank accounts** and you sign up by **phone
-number**. The app seeds two dummy banks with two accounts each, across two
-phone numbers:
+number** (with a country code — 🇮🇳 +91 or 🇦🇪 +971). The app seeds these dummy
+banks/accounts:
 
 | Phone | Holder | Bank | UPI ID | Balance |
 |-------|--------|------|--------|---------|
-| 9810000001 | Ravi Kumar | HDFC Bank | `ravi@hdfc` | ₹5,000 |
-| 9810000001 | Ravi Kumar | State Bank of India | `ravi@sbi` | ₹3,000 |
-| 9820000002 | Priya Shah | HDFC Bank | `priya@hdfc` | ₹8,000 |
-| 9820000002 | Priya Shah | State Bank of India | `priya@sbi` | ₹2,000 |
+| +91 9810000001 | Ravi Kumar | HDFC Bank | `ravi@hdfc` | ₹5,000 |
+| +91 9810000001 | Ravi Kumar | State Bank of India | `ravi@sbi` | ₹3,000 |
+| +91 9820000002 | Priya Shah | HDFC Bank | `priya@hdfc` | ₹8,000 |
+| +91 9820000002 | Priya Shah | State Bank of India | `priya@sbi` | ₹2,000 |
+| +971 501234567 | Sara Ali | Emirates NBD | `sara@enbd` | ₹10,000 |
+| +971 509876543 | Omar Khan | Emirates NBD | `omar@enbd` | ₹7,000 |
+
+(Amounts are all in the ₹ simulation for now — multi-currency isn't modelled yet.)
 
 ## The core flow
 
-1. **Sign up by phone**: enter your number → the app lists the bank accounts
-   linked to it → pick one and set a **UPI PIN** ("claiming" the account).
-2. Your balance is that **bank account's** balance; payments draw from it.
+1. **Sign up by phone**: pick a country code and enter your number → the app
+   lists the bank accounts linked to it → pick one and set a **UPI PIN**
+   ("claiming" the account).
+2. Your balance is that **bank account's** balance; payments draw from it. One
+   profile can link **several accounts** and choose which to pay from.
 3. A payee shows a **QR code** (a `upi://pay` link) or you enter a UPI ID.
 4. A payer pays, **authorising with their PIN**; balances update atomically and
    both parties see the transaction in history.

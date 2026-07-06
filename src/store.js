@@ -21,15 +21,19 @@ import { ApiError } from './errors.js';
 const SEED_BANKS = [
   { id: 'hdfc', name: 'HDFC Bank', ifsc: 'HDFC0001' },
   { id: 'sbi', name: 'State Bank of India', ifsc: 'SBIN0001' },
+  { id: 'enbd', name: 'Emirates NBD', ifsc: 'EBILAEAD' },
 ];
 
-// 2 banks x 2 accounts, across 2 phone numbers (each phone has an account in
-// both banks — so signing up by phone offers a real choice, like GPay).
+// Phone numbers are stored in full international form (country code + number).
+// India (+91): Ravi & Priya each hold an account in both HDFC and SBI.
+// UAE (+971): Sara & Omar bank with Emirates NBD.
 const SEED_ACCOUNTS = [
-  { upiId: 'ravi@hdfc', bankId: 'hdfc', accountNumber: '1001', holderName: 'Ravi Kumar', phone: '9810000001', balancePaise: 500000 },
-  { upiId: 'ravi@sbi', bankId: 'sbi', accountNumber: '2001', holderName: 'Ravi Kumar', phone: '9810000001', balancePaise: 300000 },
-  { upiId: 'priya@hdfc', bankId: 'hdfc', accountNumber: '1002', holderName: 'Priya Shah', phone: '9820000002', balancePaise: 800000 },
-  { upiId: 'priya@sbi', bankId: 'sbi', accountNumber: '2002', holderName: 'Priya Shah', phone: '9820000002', balancePaise: 200000 },
+  { upiId: 'ravi@hdfc', bankId: 'hdfc', accountNumber: '1001', holderName: 'Ravi Kumar', phone: '+919810000001', balancePaise: 500000 },
+  { upiId: 'ravi@sbi', bankId: 'sbi', accountNumber: '2001', holderName: 'Ravi Kumar', phone: '+919810000001', balancePaise: 300000 },
+  { upiId: 'priya@hdfc', bankId: 'hdfc', accountNumber: '1002', holderName: 'Priya Shah', phone: '+919820000002', balancePaise: 800000 },
+  { upiId: 'priya@sbi', bankId: 'sbi', accountNumber: '2002', holderName: 'Priya Shah', phone: '+919820000002', balancePaise: 200000 },
+  { upiId: 'sara@enbd', bankId: 'enbd', accountNumber: '3001', holderName: 'Sara Ali', phone: '+971501234567', balancePaise: 1000000 },
+  { upiId: 'omar@enbd', bankId: 'enbd', accountNumber: '3002', holderName: 'Omar Khan', phone: '+971509876543', balancePaise: 700000 },
 ];
 
 export function createStore({

@@ -53,10 +53,10 @@ test('a failed (over-balance) transfer rolls back and persists nothing', () => {
 test('seed data is only inserted once (no duplicate banks on reopen)', () => {
   const dbPath = tmpDbPath();
   let store = createStore({ dbPath });
-  assert.equal(store.getBanks().length, 2);
+  assert.equal(store.getBanks().length, 3);
   store.db.close();
   store = createStore({ dbPath });
-  assert.equal(store.getBanks().length, 2); // not 4
+  assert.equal(store.getBanks().length, 3); // not 6
   store.db.close();
   fs.rmSync(path.dirname(dbPath), { recursive: true, force: true });
 });

@@ -23,15 +23,21 @@ test('health check', async () => {
 test('GET /banks lists the dummy banks', async () => {
   const res = await request(makeApp()).get('/banks').expect(200);
   const names = res.body.banks.map((b) => b.name).sort();
-  assert.deepEqual(names, ['HDFC Bank', 'State Bank of India']);
+  assert.deepEqual(names, ['Emirates NBD', 'HDFC Bank', 'State Bank of India']);
 });
 
 test('GET /accounts?phone finds the bank accounts linked to that number', async () => {
-  const res = await request(makeApp()).get('/accounts').query({ phone: '9810000001' }).expect(200);
+  const res = await request(makeApp()).get('/accounts').query({ phone: '+919810000001' }).expect(200);
   assert.equal(res.body.accounts.length, 2); // Ravi has HDFC + SBI
   assert.deepEqual(res.body.accounts.map((a) => a.upiId).sort(), ['ravi@hdfc', 'ravi@sbi']);
   assert.equal(res.body.accounts.every((a) => a.claimed === false), true);
   assert.ok(res.body.accounts[0].accountMasked.startsWith('••••'));
+});
+
+test('GET /accounts?phone finds a UAE (Emirates NBD) account', async () => {
+  const res = await request(makeApp()).get('/accounts').query({ phone: '+971501234567' }).expect(200);
+  assert.deepEqual(res.body.accounts.map((a) => a.upiId), ['sara@enbd']);
+  assert.equal(res.body.accounts[0].bankName, 'Emirates NBD');
 });
 
 test('a phone with no accounts returns an empty list', async () => {

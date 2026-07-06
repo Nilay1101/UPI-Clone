@@ -13,28 +13,42 @@
 
     <!-- ============ ONBOARDING ============ -->
     <section id="screen-onboard" class="screen">
-      <header class="brand">
-        <div class="logo">₹</div>
-        <h1>UPI-Clone</h1>
-        <p class="tagline">Scan. Pay. Done. <span class="sim">(simulation)</span></p>
-      </header>
+      <!-- Step 1: enter mobile number -->
+      <div id="onboard-phone">
+        <header class="brand">
+          <div class="logo">₹</div>
+          <h1>UPI-Clone</h1>
+          <p class="tagline">Scan. Pay. Done. <span class="sim">(simulation)</span></p>
+        </header>
 
-      <div class="card">
-        <h2>Sign in with your phone</h2>
-        <form id="form-phone">
-          <label>Phone number
-            <input name="phone" type="tel" inputmode="numeric" autocomplete="off"
-                   placeholder="9810000001" required />
-          </label>
-          <button type="submit" class="btn primary">Find my accounts</button>
-        </form>
-        <p class="demo-contacts">Demo numbers: <code>9810000001</code> (Ravi) ·
-          <code>9820000002</code> (Priya)</p>
+        <div class="card">
+          <h2>Enter your mobile number</h2>
+          <form id="form-phone">
+            <div class="phone-row">
+              <select id="country-code" name="cc" class="cc-select" aria-label="Country">
+                <option value="+91">🇮🇳 +91</option>
+                <option value="+971">🇦🇪 +971</option>
+              </select>
+              <input name="phone" type="tel" inputmode="numeric" autocomplete="tel"
+                     placeholder="9810000001" required />
+            </div>
+            <button type="submit" class="btn primary">Continue</button>
+          </form>
+          <p class="demo-contacts">Demo: 🇮🇳 <code>9810000001</code> · <code>9820000002</code>
+            &nbsp;·&nbsp; 🇦🇪 <code>501234567</code> · <code>509876543</code></p>
+        </div>
       </div>
 
-      <div id="account-picker" class="card" hidden>
-        <h2>Your bank accounts</h2>
-        <div id="account-list" class="accounts"></div>
+      <!-- Step 2: choose an account -->
+      <div id="onboard-accounts" hidden>
+        <header class="sub-header">
+          <button type="button" class="back" id="btn-onboard-back">‹</button>
+          <h2>Choose an account</h2>
+        </header>
+        <p class="onboard-num">Accounts for <span id="onboard-number">—</span></p>
+        <div class="card">
+          <div id="account-list" class="accounts"></div>
+        </div>
       </div>
     </section>
 

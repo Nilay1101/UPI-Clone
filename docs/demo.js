@@ -33,12 +33,15 @@ function seedDb() {
     banks: {
       hdfc: { id: 'hdfc', name: 'HDFC Bank', ifsc: 'HDFC0001' },
       sbi: { id: 'sbi', name: 'State Bank of India', ifsc: 'SBIN0001' },
+      enbd: { id: 'enbd', name: 'Emirates NBD', ifsc: 'EBILAEAD' },
     },
     accounts: {
-      'ravi@hdfc': acct('ravi@hdfc', 'hdfc', '1001', 'Ravi Kumar', '9810000001', 500000),
-      'ravi@sbi': acct('ravi@sbi', 'sbi', '2001', 'Ravi Kumar', '9810000001', 300000),
-      'priya@hdfc': acct('priya@hdfc', 'hdfc', '1002', 'Priya Shah', '9820000002', 800000),
-      'priya@sbi': acct('priya@sbi', 'sbi', '2002', 'Priya Shah', '9820000002', 200000),
+      'ravi@hdfc': acct('ravi@hdfc', 'hdfc', '1001', 'Ravi Kumar', '+919810000001', 500000),
+      'ravi@sbi': acct('ravi@sbi', 'sbi', '2001', 'Ravi Kumar', '+919810000001', 300000),
+      'priya@hdfc': acct('priya@hdfc', 'hdfc', '1002', 'Priya Shah', '+919820000002', 800000),
+      'priya@sbi': acct('priya@sbi', 'sbi', '2002', 'Priya Shah', '+919820000002', 200000),
+      'sara@enbd': acct('sara@enbd', 'enbd', '3001', 'Sara Ali', '+971501234567', 1000000),
+      'omar@enbd': acct('omar@enbd', 'enbd', '3002', 'Omar Khan', '+971509876543', 700000),
     },
     transactions: [],
     requests: [],
@@ -285,6 +288,8 @@ function show(screenId) {
   if (screenId !== 'screen-pay') stopScanner();
   if (screenId === 'screen-history') loadHistory();
   if (screenId === 'screen-request') loadRequests();
+  if (screenId === 'screen-pay') populatePayFrom();
+  if (screenId !== 'screen-home') $('#account-switcher').hidden = true;
 }
 
 const rupees = (n) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -328,22 +333,33 @@ async function refreshBalance() {
   renderHome();
 }
 
-/* ---- Onboarding: phone -> pick bank account ---- */
+/* ---- Onboarding: step 1 phone (with country code) -> step 2 pick account ---- */
+function showOnboardStep(step) {
+  $('#onboard-phone').hidden = step !== 'phone';
+  $('#onboard-accounts').hidden = step !== 'accounts';
+}
+
 $('#form-phone').addEventListener('submit', async (e) => {
   e.preventDefault();
-  const phone = new FormData(e.target).get('phone').trim();
+  const cc = $('#country-code').value;
+  const local = new FormData(e.target).get('phone').replace(/\D/g, '');
+  if (!local) return toast('Enter a mobile number', 'err');
+  const full = cc + local;
   try {
-    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(phone)}`);
-    renderAccountPicker(accounts, phone);
+    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(full)}`);
+    $('#onboard-number').textContent = `${cc} ${local}`;
+    renderAccountPicker(accounts, full);
+    showOnboardStep('accounts');
   } catch (err) { toast(err.message, 'err'); }
 });
 
+$('#btn-onboard-back').addEventListener('click', () => showOnboardStep('phone'));
+
 function renderAccountPicker(accounts, phone) {
   const list = $('#account-list');
-  const picker = $('#account-picker');
   if (!accounts.length) {
-    list.innerHTML = `<p class="empty">No accounts linked to ${escapeHtml(phone)}. Try 9810000001 or 9820000002.</p>`;
-    picker.hidden = false;
+    list.innerHTML = `<p class="empty">No accounts are linked to this number in the demo.
+      Go back and try 🇮🇳 9810000001 / 9820000002 or 🇦🇪 501234567 / 509876543.</p>`;
     return;
   }
   list.innerHTML = '';
@@ -366,7 +382,6 @@ function renderAccountPicker(accounts, phone) {
       ${action}`;
     list.appendChild(el);
   }
-  picker.hidden = false;
 }
 
 $('#account-list').addEventListener('click', async (e) => {
@@ -389,14 +404,94 @@ $('#account-list').addEventListener('click', async (e) => {
 $('#btn-logout').addEventListener('click', () => {
   clearSession();
   state.user = null;
-  $('#account-picker').hidden = true;
   $('#form-phone').reset();
+  showOnboardStep('phone');
   show('screen-onboard');
 });
 
 $('#btn-refresh').addEventListener('click', () =>
   refreshBalance().then(() => toast('Balance updated', 'ok')).catch((e) => toast(e.message, 'err')),
 );
+
+/* ---- Multiple banks per profile ---- */
+async function myAccounts() {
+  const { accounts } = await api(`/accounts?phone=${encodeURIComponent(state.user.phone)}`);
+  return accounts;
+}
+
+$('#btn-switch-account').addEventListener('click', () => {
+  const panel = $('#account-switcher');
+  const willShow = panel.hidden;
+  panel.hidden = !willShow;
+  if (willShow) loadSwitcher();
+});
+
+async function loadSwitcher() {
+  const list = $('#switcher-list');
+  list.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const accounts = await myAccounts();
+    list.innerHTML = '';
+    for (const a of accounts) {
+      const isActive = a.upiId === state.user.upiId;
+      const el = document.createElement('div');
+      el.className = 'acct' + (isActive ? ' active' : '');
+      let action;
+      if (isActive) action = '<span class="acct-tag">Active</span>';
+      else if (a.claimed) action = `<button class="btn" data-use="${escapeAttr(a.upiId)}">Use this</button>`;
+      else action = `<div class="acct-claim">
+          <input class="claim-pin" type="password" inputmode="numeric" autocomplete="off"
+                 minlength="4" maxlength="6" placeholder="Set a PIN to add" />
+          <button class="btn primary" data-add="${escapeAttr(a.upiId)}">Add</button>
+        </div>`;
+      el.innerHTML = `
+        <div class="acct-top">
+          <span class="acct-bank">${escapeHtml(a.bankName)}</span>
+          <span class="acct-bal">₹${rupees(a.balanceRupees)}</span>
+        </div>
+        <p class="acct-sub">${escapeHtml(a.accountMasked)} · ${escapeHtml(a.upiId)}</p>
+        ${action}`;
+      list.appendChild(el);
+    }
+  } catch (err) { list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
+}
+
+$('#switcher-list').addEventListener('click', async (e) => {
+  const use = e.target.closest('[data-use]');
+  const add = e.target.closest('[data-add]');
+  try {
+    if (use) {
+      await loadUser(use.dataset.use);
+      $('#account-switcher').hidden = true;
+      toast('Switched account', 'ok');
+    } else if (add) {
+      const pin = add.closest('.acct-claim').querySelector('.claim-pin').value;
+      const user = await api(`/accounts/${encodeURIComponent(add.dataset.add)}/claim`, {
+        method: 'POST', body: JSON.stringify({ pin }),
+      });
+      toast(`Added ${user.bankName}`, 'ok');
+      await loadUser(user.upiId);
+      $('#account-switcher').hidden = true;
+    }
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+async function populatePayFrom() {
+  const sel = $('#pay-from');
+  try {
+    const accounts = (await myAccounts()).filter((a) => a.claimed);
+    sel.innerHTML = '';
+    for (const a of accounts) {
+      const opt = document.createElement('option');
+      opt.value = a.upiId;
+      opt.textContent = `${a.bankName} ${a.accountMasked} — ₹${rupees(a.balanceRupees)}`;
+      if (a.upiId === state.user.upiId) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch {
+    sel.innerHTML = `<option value="${escapeAttr(state.user.upiId)}">${escapeHtml(state.user.upiId)}</option>`;
+  }
+}
 
 $('#btn-reset-demo').addEventListener('click', () => {
   localStorage.removeItem(DB_KEY);
@@ -464,11 +559,12 @@ $('#form-pay').addEventListener('submit', async (e) => {
   e.preventDefault();
   const f = new FormData(e.target);
   const to = f.get('to').trim();
-  const body = { from: state.user.upiId, amount: Number(f.get('amount')), note: f.get('note') || undefined, pin: f.get('pin') };
+  const body = { from: f.get('from') || state.user.upiId, amount: Number(f.get('amount')), note: f.get('note') || undefined, pin: f.get('pin') };
   if (to.startsWith('upi://')) body.upiUri = to; else body.to = to;
   try {
     const result = await api('/pay', { method: 'POST', body: JSON.stringify(body) });
     state.user = result.payer;
+    saveSession(result.payer.upiId);
     renderHome();
     e.target.reset();
     $('#qr-result') && ($('#qr-result').hidden = true);
