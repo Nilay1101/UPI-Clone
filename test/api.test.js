@@ -7,9 +7,23 @@ import { createStore } from '../src/store.js';
 const PIN = '1234';
 const makeApp = () => createApp(createStore());
 
-// Claim (activate) a seeded account by setting a PIN — this is "sign up".
+const phoneOf = async (app, upiId) =>
+  (await request(app).get(`/users/${encodeURIComponent(upiId)}`)).body.phone;
+
+// Complete OTP for a phone and return the verification token.
+async function getToken(app, phone) {
+  const { devCode } = (await request(app).post('/otp/send').send({ phone }).expect(200)).body;
+  const { token } = (await request(app).post('/otp/verify').send({ phone, code: devCode }).expect(200)).body;
+  return token;
+}
+
+// Claim (activate) a seeded account: verify the phone by OTP, then set a PIN.
 async function claim(app, upiId, pin = PIN) {
-  const res = await request(app).post(`/accounts/${encodeURIComponent(upiId)}/claim`).send({ pin }).expect(201);
+  const token = await getToken(app, await phoneOf(app, upiId));
+  const res = await request(app)
+    .post(`/accounts/${encodeURIComponent(upiId)}/claim`)
+    .send({ pin, token })
+    .expect(201);
   return res.body;
 }
 const balance = async (app, upiId) =>
@@ -57,16 +71,51 @@ test('claiming an account sets it up and keeps its bank balance', async () => {
   assert.equal(user.pin_hash, undefined);
 });
 
+test('OTP: send returns a 6-digit code, verify issues a token', async () => {
+  const app = makeApp();
+  const send = await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(200);
+  assert.match(send.body.devCode, /^\d{6}$/);
+  const verify = await request(app)
+    .post('/otp/verify')
+    .send({ phone: '+919810000001', code: send.body.devCode })
+    .expect(200);
+  assert.ok(verify.body.token);
+});
+
+test('OTP: a wrong code is rejected', async () => {
+  const app = makeApp();
+  await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(200);
+  const res = await request(app)
+    .post('/otp/verify')
+    .send({ phone: '+919810000001', code: '000000' })
+    .expect(401);
+  assert.match(res.body.error, /incorrect code/);
+});
+
+test('claiming without OTP verification is rejected', async () => {
+  const app = makeApp();
+  const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: PIN }).expect(401);
+  assert.match(res.body.error, /not verified/);
+  // A token for a DIFFERENT phone must not work either.
+  const otherToken = await getToken(app, '+919820000002'); // Priya's phone
+  await request(app)
+    .post('/accounts/ravi@hdfc/claim')
+    .send({ pin: PIN, token: otherToken })
+    .expect(401);
+});
+
 test('claiming requires a valid 4-6 digit PIN', async () => {
   const app = makeApp();
-  const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '12' }).expect(400);
+  const token = await getToken(app, '+919810000001');
+  const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '12', token }).expect(400);
   assert.match(res.body.error, /pin must be 4 to 6 digits/);
 });
 
 test('an already-claimed account cannot be claimed again', async () => {
   const app = makeApp();
   await claim(app, 'ravi@hdfc');
-  const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '5555' }).expect(409);
+  const token = await getToken(app, '+919810000001');
+  const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '5555', token }).expect(409);
   assert.match(res.body.error, /already set up/);
 });
 

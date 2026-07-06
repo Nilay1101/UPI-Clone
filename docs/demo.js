@@ -45,11 +45,23 @@ function seedDb() {
     },
     transactions: [],
     requests: [],
+    otps: {},
+    sessions: {},
   };
   saveDb(d);
   return d;
 }
 function db() { return loadDb() || seedDb(); }
+
+const OTP_TTL_MS = 5 * 60 * 1000;
+const SESSION_TTL_MS = 30 * 60 * 1000;
+const OTP_MAX_ATTEMPTS = 5;
+const sixDigits = () => String(Math.floor(100000 + Math.random() * 900000));
+function sessionPhone(d, token) {
+  const s = d.sessions[token];
+  if (!s || s.expiresAt < Date.now()) return null;
+  return s.phone;
+}
 
 const uuid = () => (crypto.randomUUID && crypto.randomUUID()) || String(Date.now() + Math.random());
 const rupeesToPaise = (r) => { const n = Number(r); return Number.isFinite(n) ? Math.round(n * 100) : NaN; };
@@ -101,7 +113,12 @@ function requireUser(d, upiId, label) {
 function assertValidPin(pin) {
   if (!/^\d{4,6}$/.test(String(pin ?? ''))) throw new Error('pin must be 4 to 6 digits');
 }
-function ensure(d) { if (!d.requests) d.requests = []; if (!d.transactions) d.transactions = []; }
+function ensure(d) {
+  if (!d.requests) d.requests = [];
+  if (!d.transactions) d.transactions = [];
+  if (!d.otps) d.otps = {};
+  if (!d.sessions) d.sessions = {};
+}
 
 function authorizePin(account, pin) {
   if (!account.pin) throw new Error('this account is not activated; set a UPI PIN first');
@@ -156,6 +173,30 @@ async function api(path, options = {}) {
 
   if (rawPath === '/banks' && method === 'GET') return { banks: Object.values(d.banks) };
 
+  // Send a one-time code (no real SMS — the code is returned so the demo can show it).
+  if (rawPath === '/otp/send' && method === 'POST') {
+    const phone = String(body.phone || '').trim();
+    if (!phone) throw new Error('phone is required');
+    const code = sixDigits();
+    d.otps[phone] = { code, expiresAt: Date.now() + OTP_TTL_MS, attempts: 0 };
+    saveDb(d);
+    return { sent: true, devCode: code };
+  }
+
+  // Verify a code → mint a short-lived token.
+  if (rawPath === '/otp/verify' && method === 'POST') {
+    const phone = String(body.phone || '').trim();
+    const rec = d.otps[phone];
+    if (!rec || rec.expiresAt < Date.now()) throw new Error('code expired; request a new one');
+    if (rec.attempts >= OTP_MAX_ATTEMPTS) { delete d.otps[phone]; saveDb(d); throw new Error('too many attempts; request a new code'); }
+    if (String(body.code) !== rec.code) { rec.attempts += 1; saveDb(d); throw new Error('incorrect code'); }
+    delete d.otps[phone];
+    const token = uuid();
+    d.sessions[token] = { phone, expiresAt: Date.now() + SESSION_TTL_MS };
+    saveDb(d);
+    return { token };
+  }
+
   if (rawPath === '/accounts' && method === 'GET') {
     const phone = String(params.get('phone') || '').trim();
     if (!phone) throw new Error('phone is required');
@@ -166,6 +207,9 @@ async function api(path, options = {}) {
   if (parts[0] === 'accounts' && parts.length === 3 && parts[2] === 'claim' && method === 'POST') {
     const upiId = decodeURIComponent(parts[1]);
     const account = requireUser(d, upiId, 'account');
+    if (sessionPhone(d, body.token) !== account.phone) {
+      throw new Error('phone not verified; complete OTP verification first');
+    }
     if (account.claimed) throw new Error('this account is already set up; just log in');
     assertValidPin(body.pin);
     account.pin = String(body.pin);
@@ -269,7 +313,7 @@ async function api(path, options = {}) {
 /* ============================================================
  * UI (mirrors the real app's front-end)
  * ========================================================== */
-const state = { user: null, scanner: null };
+const state = { user: null, scanner: null, otpToken: null, pendingPhone: null };
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -333,9 +377,10 @@ async function refreshBalance() {
   renderHome();
 }
 
-/* ---- Onboarding: step 1 phone (with country code) -> step 2 pick account ---- */
+/* ---- Onboarding: phone -> OTP -> pick account ---- */
 function showOnboardStep(step) {
   $('#onboard-phone').hidden = step !== 'phone';
+  $('#onboard-otp').hidden = step !== 'otp';
   $('#onboard-accounts').hidden = step !== 'accounts';
 }
 
@@ -346,14 +391,31 @@ $('#form-phone').addEventListener('submit', async (e) => {
   if (!local) return toast('Enter a mobile number', 'err');
   const full = cc + local;
   try {
-    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(full)}`);
-    $('#onboard-number').textContent = `${cc} ${local}`;
-    renderAccountPicker(accounts, full);
+    const { devCode } = await api('/otp/send', { method: 'POST', body: JSON.stringify({ phone: full }) });
+    state.pendingPhone = full;
+    $('#otp-number').textContent = `${cc} ${local}`;
+    $('#otp-hint').innerHTML = `Demo code (no real SMS is sent): <code>${escapeHtml(devCode)}</code>`;
+    $('#form-otp').reset();
+    showOnboardStep('otp');
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+$('#form-otp').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const code = new FormData(e.target).get('code').trim();
+  try {
+    const { token } = await api('/otp/verify', { method: 'POST', body: JSON.stringify({ phone: state.pendingPhone, code }) });
+    state.otpToken = token;
+    localStorage.setItem('upi_demo_token', token);
+    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(state.pendingPhone)}`);
+    $('#onboard-number').textContent = $('#otp-number').textContent;
+    renderAccountPicker(accounts, state.pendingPhone);
     showOnboardStep('accounts');
   } catch (err) { toast(err.message, 'err'); }
 });
 
-$('#btn-onboard-back').addEventListener('click', () => showOnboardStep('phone'));
+$('#btn-otp-back').addEventListener('click', () => showOnboardStep('phone'));
+$('#btn-onboard-back').addEventListener('click', () => showOnboardStep('otp'));
 
 function renderAccountPicker(accounts, phone) {
   const list = $('#account-list');
@@ -393,7 +455,7 @@ $('#account-list').addEventListener('click', async (e) => {
     } else if (activate) {
       const pin = activate.closest('.acct-claim').querySelector('.claim-pin').value;
       const user = await api(`/accounts/${encodeURIComponent(activate.dataset.activate)}/claim`, {
-        method: 'POST', body: JSON.stringify({ pin }),
+        method: 'POST', body: JSON.stringify({ pin, token: state.otpToken }),
       });
       toast(`Activated ${user.upiId} on ${user.bankName}`, 'ok');
       await loadUser(user.upiId);
@@ -404,6 +466,8 @@ $('#account-list').addEventListener('click', async (e) => {
 $('#btn-logout').addEventListener('click', () => {
   clearSession();
   state.user = null;
+  state.otpToken = null;
+  localStorage.removeItem('upi_demo_token');
   $('#form-phone').reset();
   showOnboardStep('phone');
   show('screen-onboard');
@@ -467,7 +531,7 @@ $('#switcher-list').addEventListener('click', async (e) => {
     } else if (add) {
       const pin = add.closest('.acct-claim').querySelector('.claim-pin').value;
       const user = await api(`/accounts/${encodeURIComponent(add.dataset.add)}/claim`, {
-        method: 'POST', body: JSON.stringify({ pin }),
+        method: 'POST', body: JSON.stringify({ pin, token: state.otpToken }),
       });
       toast(`Added ${user.bankName}`, 'ok');
       await loadUser(user.upiId);
@@ -681,6 +745,7 @@ async function loadHistory() {
 /* ---- Boot ---- */
 (async function boot() {
   db(); // ensure seed exists
+  state.otpToken = localStorage.getItem('upi_demo_token');
   const saved = localStorage.getItem(SESSION_KEY);
   if (saved) {
     try { await loadUser(saved); return; } catch { clearSession(); }

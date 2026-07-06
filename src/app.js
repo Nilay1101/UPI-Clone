@@ -82,7 +82,22 @@ export function createApp(store) {
     res.json({ banks: store.getBanks() });
   });
 
-  // Find the bank accounts linked to a phone number (sign-up / login step 1).
+  // Send a one-time code to a phone (sign-up step 1). devCode is a SIMULATION
+  // convenience — a real app texts the code and never returns it.
+  app.post('/otp/send', (req, res) => {
+    const { phone } = req.body ?? {};
+    const { code } = store.sendOtp(phone);
+    res.json({ sent: true, devCode: code });
+  });
+
+  // Verify a code and receive a short-lived verification token (step 2).
+  app.post('/otp/verify', (req, res) => {
+    const { phone, code } = req.body ?? {};
+    const { token } = store.verifyOtp(phone, code);
+    res.json({ token });
+  });
+
+  // Find the bank accounts linked to a phone number (sign-up / login).
   app.get('/accounts', (req, res) => {
     const phone = String(req.query.phone ?? '').trim();
     if (!phone) throw new ApiError(400, 'phone is required');
@@ -90,11 +105,17 @@ export function createApp(store) {
     res.json({ phone, accounts });
   });
 
-  // Claim a bank account by setting a UPI PIN (sign-up step 2).
+  // Claim a bank account by setting a UPI PIN. Requires an OTP token proving
+  // control of the account's phone number — so you can't activate an account
+  // just by knowing its number.
   app.post('/accounts/:upiId/claim', (req, res) => {
-    const { pin } = req.body ?? {};
-    const account = store.claimAccount(req.params.upiId, pin);
-    res.status(201).json(serializeUser(account));
+    const { pin, token } = req.body ?? {};
+    const account = store.requireUser(req.params.upiId, 'account');
+    if (store.sessionPhone(token) !== account.phone) {
+      throw new ApiError(401, 'phone not verified; complete OTP verification first');
+    }
+    const claimed = store.claimAccount(req.params.upiId, pin);
+    res.status(201).json(serializeUser(claimed));
   });
 
   // Look up a user by UPI ID.

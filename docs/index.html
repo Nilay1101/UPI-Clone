@@ -45,7 +45,26 @@
         </div>
       </div>
 
-      <!-- Step 2: choose an account -->
+      <!-- Step 2: verify OTP -->
+      <div id="onboard-otp" hidden>
+        <header class="sub-header">
+          <button type="button" class="back" id="btn-otp-back">‹</button>
+          <h2>Verify your number</h2>
+        </header>
+        <div class="card">
+          <p class="onboard-num">We sent a code to <span id="otp-number">—</span></p>
+          <form id="form-otp">
+            <label>6-digit code
+              <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                     maxlength="6" pattern="\d{6}" placeholder="••••••" required />
+            </label>
+            <button type="submit" class="btn primary">Verify</button>
+          </form>
+          <p class="demo-contacts" id="otp-hint">—</p>
+        </div>
+      </div>
+
+      <!-- Step 3: choose an account -->
       <div id="onboard-accounts" hidden>
         <header class="sub-header">
           <button type="button" class="back" id="btn-onboard-back">‹</button>

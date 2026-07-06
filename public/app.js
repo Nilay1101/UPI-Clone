@@ -1,8 +1,10 @@
 /* UPI-Clone web front-end. Vanilla JS, talks to the same-origin API. */
 
 const state = {
-  user: null, // { upiId, name, balanceRupees }
+  user: null, // the active account
   scanner: null, // Html5Qrcode instance when the camera is running
+  otpToken: null, // verification token from OTP (needed to activate accounts)
+  pendingPhone: null, // phone being verified during sign-up
 };
 
 /* ---------------- API helper ---------------- */
@@ -91,12 +93,14 @@ async function refreshBalance() {
 /* ---------------- Onboarding: step 1 phone → step 2 pick account ---------------- */
 const escapeAttr = (s) => String(s).replace(/"/g, '&quot;');
 
-// Step navigation between the phone entry and account picker pages.
+// Step navigation across phone → OTP → account picker.
 function showOnboardStep(step) {
   $('#onboard-phone').hidden = step !== 'phone';
+  $('#onboard-otp').hidden = step !== 'otp';
   $('#onboard-accounts').hidden = step !== 'accounts';
 }
 
+// Step 1: enter number → "send" an OTP → show the verify page.
 $('#form-phone').addEventListener('submit', async (e) => {
   e.preventDefault();
   const cc = $('#country-code').value;
@@ -104,16 +108,39 @@ $('#form-phone').addEventListener('submit', async (e) => {
   if (!local) return toast('Enter a mobile number', 'err');
   const full = cc + local;
   try {
-    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(full)}`);
-    $('#onboard-number').textContent = `${cc} ${local}`;
-    renderAccountPicker(accounts, full);
+    const { devCode } = await api('/otp/send', { method: 'POST', body: JSON.stringify({ phone: full }) });
+    state.pendingPhone = full;
+    $('#otp-number').textContent = `${cc} ${local}`;
+    $('#otp-hint').innerHTML = `Demo code (no real SMS is sent): <code>${escapeHtml(devCode)}</code>`;
+    $('#form-otp').reset();
+    showOnboardStep('otp');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
+
+// Step 2: verify the code → get a token → fetch and show the accounts.
+$('#form-otp').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const code = new FormData(e.target).get('code').trim();
+  try {
+    const { token } = await api('/otp/verify', {
+      method: 'POST',
+      body: JSON.stringify({ phone: state.pendingPhone, code }),
+    });
+    state.otpToken = token;
+    localStorage.setItem('upi_token', token);
+    const { accounts } = await api(`/accounts?phone=${encodeURIComponent(state.pendingPhone)}`);
+    $('#onboard-number').textContent = $('#otp-number').textContent;
+    renderAccountPicker(accounts, state.pendingPhone);
     showOnboardStep('accounts');
   } catch (err) {
     toast(err.message, 'err');
   }
 });
 
-$('#btn-onboard-back').addEventListener('click', () => showOnboardStep('phone'));
+$('#btn-otp-back').addEventListener('click', () => showOnboardStep('phone'));
+$('#btn-onboard-back').addEventListener('click', () => showOnboardStep('otp'));
 
 function renderAccountPicker(accounts, phone) {
   const list = $('#account-list');
@@ -155,7 +182,7 @@ $('#account-list').addEventListener('click', async (e) => {
       const pin = activate.closest('.acct-claim').querySelector('.claim-pin').value;
       const user = await api(`/accounts/${encodeURIComponent(activate.dataset.activate)}/claim`, {
         method: 'POST',
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin, token: state.otpToken }),
       });
       toast(`Activated ${user.upiId} on ${user.bankName}`, 'ok');
       await loadUser(user.upiId);
@@ -168,6 +195,8 @@ $('#account-list').addEventListener('click', async (e) => {
 $('#btn-logout').addEventListener('click', () => {
   clearSession();
   state.user = null;
+  state.otpToken = null;
+  localStorage.removeItem('upi_token');
   $('#form-phone').reset();
   showOnboardStep('phone');
   show('screen-onboard');
@@ -235,7 +264,7 @@ $('#switcher-list').addEventListener('click', async (e) => {
       const pin = add.closest('.acct-claim').querySelector('.claim-pin').value;
       const user = await api(`/accounts/${encodeURIComponent(add.dataset.add)}/claim`, {
         method: 'POST',
-        body: JSON.stringify({ pin }),
+        body: JSON.stringify({ pin, token: state.otpToken }),
       });
       toast(`Added ${user.bankName}`, 'ok');
       await loadUser(user.upiId);
@@ -519,6 +548,7 @@ function escapeHtml(s) {
 
 /* ---------------- Boot ---------------- */
 (async function boot() {
+  state.otpToken = localStorage.getItem('upi_token'); // reuse within its TTL to add banks
   const saved = localStorage.getItem('upi_current');
   if (saved) {
     try {

@@ -51,9 +51,11 @@ banks/accounts:
 
 ## The core flow
 
-1. **Sign up by phone**: pick a country code and enter your number → the app
-   lists the bank accounts linked to it → pick one and set a **UPI PIN**
-   ("claiming" the account).
+1. **Sign up by phone**: pick a country code and enter your number → verify a
+   **one-time code (OTP)** "sent" to it → the app lists the bank accounts linked
+   to that number → pick one and set a **UPI PIN** ("claiming" the account).
+   Activating an account requires the OTP token, so you can't claim an account
+   just by knowing its number. (No real SMS gateway — the demo shows the code.)
 2. Your balance is that **bank account's** balance; payments draw from it. One
    profile can link **several accounts** and choose which to pay from.
 3. A payee shows a **QR code** (a `upi://pay` link) or you enter a UPI ID.
@@ -76,8 +78,10 @@ lock auto-expires.
 |--------|-------------------------------|----------------------------------------------|
 | GET    | `/health`                     | Liveness check                               |
 | GET    | `/banks`                      | List the (dummy) banks                       |
-| GET    | `/accounts?phone=`            | Bank accounts linked to a phone (sign-up step 1) |
-| POST   | `/accounts/:upiId/claim`      | Activate an account by setting a PIN: `{ pin }` (sign-up step 2) |
+| POST   | `/otp/send`                   | "Send" a code to a phone: `{ phone }` → `{ devCode }` (sim) |
+| POST   | `/otp/verify`                 | Verify a code: `{ phone, code }` → `{ token }` |
+| GET    | `/accounts?phone=`            | Bank accounts linked to a phone              |
+| POST   | `/accounts/:upiId/claim`      | Activate an account: `{ pin, token }` (OTP token required) |
 | GET    | `/users/:upiId`               | Fetch an account + balance                   |
 | GET    | `/users/:upiId/qr`            | Payment QR; optional `?amount=&note=`        |
 | GET    | `/users/:upiId/transactions`  | Transaction history                          |

@@ -1,7 +1,12 @@
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomInt } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { hashPin, verifyPin } from './pin.js';
 import { ApiError } from './errors.js';
+
+// One-time-password / verification-token policy (all in-memory + ephemeral).
+const OTP_TTL_MS = 5 * 60 * 1000; // a code is valid for 5 minutes
+const SESSION_TTL_MS = 30 * 60 * 1000; // a verification token lasts 30 minutes
+const OTP_MAX_ATTEMPTS = 5;
 
 /**
  * SQLite-backed data store + core payment logic.
@@ -110,6 +115,10 @@ export function createStore({
     }
   }
 
+  // Ephemeral OTP + verification-token state (not persisted — auth is transient).
+  const otps = new Map(); // phone -> { code, expiresAt, attempts }
+  const sessions = new Map(); // token -> { phone, expiresAt }
+
   // ---- Mappers (DB snake_case -> app camelCase) ----
   const toAccount = (row) =>
     row && {
@@ -190,6 +199,49 @@ export function createStore({
       db.exec('ROLLBACK');
       throw err;
     }
+  }
+
+  /* ---------------- Phone OTP verification ---------------- */
+
+  /**
+   * "Send" a one-time code to a phone number. There is no real SMS gateway —
+   * this generates + stores a 6-digit code and returns it so the simulation can
+   * display it. In production the code would be texted, not returned.
+   */
+  function sendOtp(phone) {
+    const p = String(phone || '').trim();
+    if (!p) throw new ApiError(400, 'phone is required');
+    const code = String(randomInt(100000, 1000000)); // 6 digits
+    otps.set(p, { code, expiresAt: Date.now() + OTP_TTL_MS, attempts: 0 });
+    return { phone: p, code };
+  }
+
+  /** Verify a code for a phone; on success mint a short-lived token. */
+  function verifyOtp(phone, code) {
+    const p = String(phone || '').trim();
+    const rec = otps.get(p);
+    if (!rec || rec.expiresAt < Date.now()) {
+      throw new ApiError(410, 'code expired; request a new one');
+    }
+    if (rec.attempts >= OTP_MAX_ATTEMPTS) {
+      otps.delete(p);
+      throw new ApiError(429, 'too many attempts; request a new code');
+    }
+    if (String(code) !== rec.code) {
+      rec.attempts += 1;
+      throw new ApiError(401, 'incorrect code');
+    }
+    otps.delete(p);
+    const token = randomUUID();
+    sessions.set(token, { phone: p, expiresAt: Date.now() + SESSION_TTL_MS });
+    return { token };
+  }
+
+  /** The verified phone for a token, or null if missing/expired. */
+  function sessionPhone(token) {
+    const s = sessions.get(token);
+    if (!s || s.expiresAt < Date.now()) return null;
+    return s.phone;
   }
 
   /* ---------------- Banks & accounts ---------------- */
@@ -374,6 +426,7 @@ export function createStore({
   }
 
   return {
+    sendOtp, verifyOtp, sessionPhone,
     getBanks, getBank, getAccountsByPhone, getUser, requireUser, claimAccount, addAccount,
     transfer, getTransactions,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,

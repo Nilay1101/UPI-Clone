@@ -8,7 +8,10 @@ const PIN = '1234';
 const makeApp = () => createApp(createStore());
 
 async function claim(app, upiId, pin = PIN) {
-  await request(app).post(`/accounts/${encodeURIComponent(upiId)}/claim`).send({ pin }).expect(201);
+  const phone = (await request(app).get(`/users/${encodeURIComponent(upiId)}`)).body.phone;
+  const { devCode } = (await request(app).post('/otp/send').send({ phone })).body;
+  const { token } = (await request(app).post('/otp/verify').send({ phone, code: devCode })).body;
+  await request(app).post(`/accounts/${encodeURIComponent(upiId)}/claim`).send({ pin, token }).expect(201);
 }
 const balance = async (app, upiId) =>
   (await request(app).get(`/users/${encodeURIComponent(upiId)}`).expect(200)).body.balanceRupees;
