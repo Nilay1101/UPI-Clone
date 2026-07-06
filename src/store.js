@@ -46,6 +46,9 @@ export function createStore({
   maxPinAttempts = 3,
   lockMs = 15 * 60 * 1000, // 15 minutes
   seed = true,
+  resendIntervalMs = 30 * 1000, // min gap between codes to one number
+  otpSendMax = 5, // max codes to one number per window
+  otpSendWindowMs = 15 * 60 * 1000,
 } = {}) {
   const db = new DatabaseSync(dbPath);
 
@@ -118,6 +121,7 @@ export function createStore({
   // Ephemeral OTP + verification-token state (not persisted — auth is transient).
   const otps = new Map(); // phone -> { code, expiresAt, attempts }
   const sessions = new Map(); // token -> { phone, expiresAt }
+  const otpRates = new Map(); // phone -> { windowStart, count, lastSentAt }
 
   // ---- Mappers (DB snake_case -> app camelCase) ----
   const toAccount = (row) =>
@@ -211,8 +215,25 @@ export function createStore({
   function sendOtp(phone) {
     const p = String(phone || '').trim();
     if (!p) throw new ApiError(400, 'phone is required');
+
+    // Rate-limit codes per number: a minimum gap between sends, and a cap per
+    // rolling window — so a number can't be spammed with codes.
+    const now = Date.now();
+    let rl = otpRates.get(p);
+    if (!rl || now - rl.windowStart > otpSendWindowMs) {
+      rl = { windowStart: now, count: 0, lastSentAt: 0 };
+    }
+    if (rl.lastSentAt && now - rl.lastSentAt < resendIntervalMs) {
+      const wait = Math.ceil((resendIntervalMs - (now - rl.lastSentAt)) / 1000);
+      throw new ApiError(429, `please wait ${wait}s before requesting another code`);
+    }
+    if (rl.count >= otpSendMax) {
+      throw new ApiError(429, 'too many codes requested; please try again later');
+    }
+
     const code = String(randomInt(100000, 1000000)); // 6 digits
-    otps.set(p, { code, expiresAt: Date.now() + OTP_TTL_MS, attempts: 0 });
+    otps.set(p, { code, expiresAt: now + OTP_TTL_MS, attempts: 0 });
+    otpRates.set(p, { ...rl, count: rl.count + 1, lastSentAt: now });
     return { phone: p, code };
   }
 

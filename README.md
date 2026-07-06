@@ -56,6 +56,9 @@ banks/accounts:
    to that number → pick one and set a **UPI PIN** ("claiming" the account).
    Activating an account requires the OTP token, so you can't claim an account
    just by knowing its number. (No real SMS gateway — the demo shows the code.)
+   Codes are **rate-limited** (a 30-second gap before you can resend, plus a cap
+   per window), and the verify page has a **"Resend code"** button with a
+   countdown.
 2. Your balance is that **bank account's** balance; payments draw from it. One
    profile can link **several accounts** and choose which to pay from.
 3. A payee shows a **QR code** (a `upi://pay` link) or you enter a UPI ID.
@@ -78,7 +81,7 @@ lock auto-expires.
 |--------|-------------------------------|----------------------------------------------|
 | GET    | `/health`                     | Liveness check                               |
 | GET    | `/banks`                      | List the (dummy) banks                       |
-| POST   | `/otp/send`                   | "Send" a code to a phone: `{ phone }` → `{ devCode }` (sim) |
+| POST   | `/otp/send`                   | "Send" a code: `{ phone }` → `{ devCode }` (sim; rate-limited, 429 if too frequent) |
 | POST   | `/otp/verify`                 | Verify a code: `{ phone, code }` → `{ token }` |
 | GET    | `/accounts?phone=`            | Bank accounts linked to a phone              |
 | POST   | `/accounts/:upiId/claim`      | Activate an account: `{ pin, token }` (OTP token required) |

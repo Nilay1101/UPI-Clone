@@ -5,6 +5,7 @@ const state = {
   scanner: null, // Html5Qrcode instance when the camera is running
   otpToken: null, // verification token from OTP (needed to activate accounts)
   pendingPhone: null, // phone being verified during sign-up
+  resendTimer: null, // countdown interval for the "Resend code" button
 };
 
 /* ---------------- API helper ---------------- */
@@ -98,7 +99,51 @@ function showOnboardStep(step) {
   $('#onboard-phone').hidden = step !== 'phone';
   $('#onboard-otp').hidden = step !== 'otp';
   $('#onboard-accounts').hidden = step !== 'accounts';
+  if (step !== 'otp') stopResendCountdown();
 }
+
+// "Resend code" with a countdown so it can't be spammed (mirrors the server rate limit).
+function stopResendCountdown() {
+  if (state.resendTimer) clearInterval(state.resendTimer);
+  state.resendTimer = null;
+}
+function startResendCountdown(seconds = 30) {
+  stopResendCountdown();
+  const btn = $('#btn-resend');
+  let left = seconds;
+  const tick = () => {
+    if (left <= 0) {
+      stopResendCountdown();
+      btn.disabled = false;
+      btn.textContent = 'Resend code';
+    } else {
+      btn.disabled = true;
+      btn.textContent = `Resend code in ${left}s`;
+      left -= 1;
+    }
+  };
+  tick();
+  state.resendTimer = setInterval(tick, 1000);
+}
+
+async function sendOtpTo(phone, cc, local) {
+  const { devCode } = await api('/otp/send', { method: 'POST', body: JSON.stringify({ phone }) });
+  state.pendingPhone = phone;
+  $('#otp-number').textContent = `${cc} ${local}`;
+  $('#otp-hint').innerHTML = `Demo code (no real SMS is sent): <code>${escapeHtml(devCode)}</code>`;
+  startResendCountdown(30);
+}
+
+$('#btn-resend').addEventListener('click', async () => {
+  if ($('#btn-resend').disabled) return;
+  const [cc, local] = ($('#otp-number').textContent || ' ').split(' ');
+  try {
+    await sendOtpTo(state.pendingPhone, cc, local);
+    toast('New code sent', 'ok');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
 
 // Step 1: enter number → "send" an OTP → show the verify page.
 $('#form-phone').addEventListener('submit', async (e) => {
@@ -108,10 +153,7 @@ $('#form-phone').addEventListener('submit', async (e) => {
   if (!local) return toast('Enter a mobile number', 'err');
   const full = cc + local;
   try {
-    const { devCode } = await api('/otp/send', { method: 'POST', body: JSON.stringify({ phone: full }) });
-    state.pendingPhone = full;
-    $('#otp-number').textContent = `${cc} ${local}`;
-    $('#otp-hint').innerHTML = `Demo code (no real SMS is sent): <code>${escapeHtml(devCode)}</code>`;
+    await sendOtpTo(full, cc, local);
     $('#form-otp').reset();
     showOnboardStep('otp');
   } catch (err) {

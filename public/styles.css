@@ -109,6 +109,8 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 .phone-row input { margin-top: 0; flex: 1; }
 .onboard-num { color: var(--muted); font-size: 13px; margin: 0 2px 12px; }
 .onboard-num span { color: var(--ink); font-weight: 600; }
+.resend { display: block; margin: 14px auto 0; }
+.resend:disabled { color: var(--muted); cursor: default; }
 
 /* ---------- Account picker (sign-in) ---------- */
 .accounts { display: flex; flex-direction: column; gap: 10px; }

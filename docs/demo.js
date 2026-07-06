@@ -56,6 +56,10 @@ function db() { return loadDb() || seedDb(); }
 const OTP_TTL_MS = 5 * 60 * 1000;
 const SESSION_TTL_MS = 30 * 60 * 1000;
 const OTP_MAX_ATTEMPTS = 5;
+const RESEND_INTERVAL_MS = 30 * 1000;
+const OTP_SEND_MAX = 5;
+const OTP_SEND_WINDOW_MS = 15 * 60 * 1000;
+const otpRates = new Map(); // phone -> { windowStart, count, lastSentAt } (ephemeral)
 const sixDigits = () => String(Math.floor(100000 + Math.random() * 900000));
 function sessionPhone(d, token) {
   const s = d.sessions[token];
@@ -177,8 +181,16 @@ async function api(path, options = {}) {
   if (rawPath === '/otp/send' && method === 'POST') {
     const phone = String(body.phone || '').trim();
     if (!phone) throw new Error('phone is required');
+    const now = Date.now();
+    let rl = otpRates.get(phone);
+    if (!rl || now - rl.windowStart > OTP_SEND_WINDOW_MS) rl = { windowStart: now, count: 0, lastSentAt: 0 };
+    if (rl.lastSentAt && now - rl.lastSentAt < RESEND_INTERVAL_MS) {
+      throw new Error(`please wait ${Math.ceil((RESEND_INTERVAL_MS - (now - rl.lastSentAt)) / 1000)}s before requesting another code`);
+    }
+    if (rl.count >= OTP_SEND_MAX) throw new Error('too many codes requested; please try again later');
     const code = sixDigits();
-    d.otps[phone] = { code, expiresAt: Date.now() + OTP_TTL_MS, attempts: 0 };
+    d.otps[phone] = { code, expiresAt: now + OTP_TTL_MS, attempts: 0 };
+    otpRates.set(phone, { ...rl, count: rl.count + 1, lastSentAt: now });
     saveDb(d);
     return { sent: true, devCode: code };
   }
@@ -313,7 +325,7 @@ async function api(path, options = {}) {
 /* ============================================================
  * UI (mirrors the real app's front-end)
  * ========================================================== */
-const state = { user: null, scanner: null, otpToken: null, pendingPhone: null };
+const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null };
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -382,19 +394,47 @@ function showOnboardStep(step) {
   $('#onboard-phone').hidden = step !== 'phone';
   $('#onboard-otp').hidden = step !== 'otp';
   $('#onboard-accounts').hidden = step !== 'accounts';
+  if (step !== 'otp') stopResendCountdown();
 }
+
+function stopResendCountdown() {
+  if (state.resendTimer) clearInterval(state.resendTimer);
+  state.resendTimer = null;
+}
+function startResendCountdown(seconds = 30) {
+  stopResendCountdown();
+  const btn = $('#btn-resend');
+  let left = seconds;
+  const tick = () => {
+    if (left <= 0) { stopResendCountdown(); btn.disabled = false; btn.textContent = 'Resend code'; }
+    else { btn.disabled = true; btn.textContent = `Resend code in ${left}s`; left -= 1; }
+  };
+  tick();
+  state.resendTimer = setInterval(tick, 1000);
+}
+
+async function sendOtpTo(phone, cc, local) {
+  const { devCode } = await api('/otp/send', { method: 'POST', body: JSON.stringify({ phone }) });
+  state.pendingPhone = phone;
+  $('#otp-number').textContent = `${cc} ${local}`;
+  $('#otp-hint').innerHTML = `Demo code (no real SMS is sent): <code>${escapeHtml(devCode)}</code>`;
+  startResendCountdown(30);
+}
+
+$('#btn-resend').addEventListener('click', async () => {
+  if ($('#btn-resend').disabled) return;
+  const [cc, local] = ($('#otp-number').textContent || ' ').split(' ');
+  try { await sendOtpTo(state.pendingPhone, cc, local); toast('New code sent', 'ok'); }
+  catch (err) { toast(err.message, 'err'); }
+});
 
 $('#form-phone').addEventListener('submit', async (e) => {
   e.preventDefault();
   const cc = $('#country-code').value;
   const local = new FormData(e.target).get('phone').replace(/\D/g, '');
   if (!local) return toast('Enter a mobile number', 'err');
-  const full = cc + local;
   try {
-    const { devCode } = await api('/otp/send', { method: 'POST', body: JSON.stringify({ phone: full }) });
-    state.pendingPhone = full;
-    $('#otp-number').textContent = `${cc} ${local}`;
-    $('#otp-hint').innerHTML = `Demo code (no real SMS is sent): <code>${escapeHtml(devCode)}</code>`;
+    await sendOtpTo(cc + local, cc, local);
     $('#form-otp').reset();
     showOnboardStep('otp');
   } catch (err) { toast(err.message, 'err'); }

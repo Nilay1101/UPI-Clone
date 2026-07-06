@@ -113,10 +113,26 @@ test('claiming requires a valid 4-6 digit PIN', async () => {
 
 test('an already-claimed account cannot be claimed again', async () => {
   const app = makeApp();
-  await claim(app, 'ravi@hdfc');
+  // One OTP token, reused for both claim attempts (a second send would be rate-limited).
   const token = await getToken(app, '+919810000001');
+  await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: PIN, token }).expect(201);
   const res = await request(app).post('/accounts/ravi@hdfc/claim').send({ pin: '5555', token }).expect(409);
   assert.match(res.body.error, /already set up/);
+});
+
+test('OTP sends to a number are rate-limited (min gap)', async () => {
+  const app = makeApp();
+  await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(200);
+  const res = await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(429);
+  assert.match(res.body.error, /wait \d+s/);
+});
+
+test('OTP sends are capped per window', async () => {
+  const app = createApp(createStore({ resendIntervalMs: 0, otpSendMax: 2 }));
+  await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(200);
+  await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(200);
+  const res = await request(app).post('/otp/send').send({ phone: '+919810000001' }).expect(429);
+  assert.match(res.body.error, /too many/);
 });
 
 test('QR endpoint returns a upi:// link and PNG for an account', async () => {
