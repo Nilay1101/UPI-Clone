@@ -42,6 +42,16 @@ const SEED_ACCOUNTS = [
   { upiId: 'omar@enbd', bankId: 'enbd', accountNumber: '3002', holderName: 'Omar Khan', phone: '+971509876543', balancePaise: 700000 },
 ];
 
+// Billers (businesses you can pay). They're payees with no bank/phone; a bill
+// payment is just a normal PIN-authorised transfer to the biller.
+const SEED_BILLERS = [
+  { upiId: 'airtel@bill', name: 'Airtel Prepaid', category: 'mobile' },
+  { upiId: 'power@bill', name: 'State Electricity Board', category: 'electricity' },
+  { upiId: 'tataplay@bill', name: 'Tata Play DTH', category: 'dth' },
+  { upiId: 'water@bill', name: 'City Water Works', category: 'water' },
+  { upiId: 'gas@bill', name: 'Bharat Gas', category: 'gas' },
+];
+
 export function createStore({
   dbPath = ':memory:',
   maxPinAttempts = 3,
@@ -65,7 +75,7 @@ export function createStore({
 
     CREATE TABLE IF NOT EXISTS accounts (
       upi_id         TEXT PRIMARY KEY,
-      bank_id        TEXT NOT NULL REFERENCES banks(id),
+      bank_id        TEXT REFERENCES banks(id),
       account_number TEXT NOT NULL,
       holder_name    TEXT NOT NULL,
       phone          TEXT NOT NULL,
@@ -74,9 +84,12 @@ export function createStore({
       failed_pin_attempts INTEGER NOT NULL DEFAULT 0,
       locked_until   TEXT,
       claimed        INTEGER NOT NULL DEFAULT 0,
+      kind           TEXT NOT NULL DEFAULT 'personal',
+      category       TEXT,
       created_at     TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_acct_phone ON accounts(phone);
+    CREATE INDEX IF NOT EXISTS idx_acct_kind ON accounts(kind);
 
     CREATE TABLE IF NOT EXISTS transactions (
       id           TEXT PRIMARY KEY,
@@ -117,6 +130,13 @@ export function createStore({
     for (const a of SEED_ACCOUNTS) {
       insAcct.run(a.upiId, a.bankId, a.accountNumber, a.holderName, a.phone, a.balancePaise, now);
     }
+    const insBiller = db.prepare(
+      `INSERT INTO accounts (upi_id, bank_id, account_number, holder_name, phone, kind, category, created_at)
+       VALUES (?, NULL, ?, ?, '', 'biller', ?, ?)`,
+    );
+    for (const b of SEED_BILLERS) {
+      insBiller.run(b.upiId, b.upiId.split('@')[0].toUpperCase(), b.name, b.category, now);
+    }
   }
 
   // Ephemeral OTP + verification-token state (not persisted — auth is transient).
@@ -152,13 +172,23 @@ export function createStore({
       txnId: row.txn_id, createdAt: row.created_at, resolvedAt: row.resolved_at,
     };
 
+  // LEFT JOIN so billers (which have no bank) still resolve.
   const ACCOUNT_SELECT = `
-    SELECT a.*, b.name AS bank_name FROM accounts a JOIN banks b ON b.id = a.bank_id`;
+    SELECT a.*, b.name AS bank_name FROM accounts a LEFT JOIN banks b ON b.id = a.bank_id`;
 
   const stmts = {
     banks: db.prepare('SELECT * FROM banks ORDER BY name'),
-    accountsByPhone: db.prepare(`${ACCOUNT_SELECT} WHERE a.phone = ? ORDER BY b.name`),
+    accountsByPhone: db.prepare(
+      `${ACCOUNT_SELECT} WHERE a.phone = ? AND a.kind = 'personal' ORDER BY b.name`,
+    ),
     getAccount: db.prepare(`${ACCOUNT_SELECT} WHERE a.upi_id = ?`),
+    contacts: db.prepare(
+      `SELECT holder_name, MIN(upi_id) AS upi_id FROM accounts
+       WHERE kind = 'personal' AND phone <> ? GROUP BY holder_name ORDER BY holder_name`,
+    ),
+    billers: db.prepare(
+      `SELECT upi_id, holder_name, category FROM accounts WHERE kind = 'biller' ORDER BY holder_name`,
+    ),
     insertAccount: db.prepare(
       `INSERT INTO accounts (upi_id, bank_id, account_number, holder_name, phone, balance_paise, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -316,6 +346,23 @@ export function createStore({
   /** Accounts linked to a phone number (for sign-up / login). */
   function getAccountsByPhone(phone) {
     return stmts.accountsByPhone.all(String(phone || '')).map(toAccount);
+  }
+
+  /** People you can pay (one per person), excluding the given phone (yourself). */
+  function getContacts(excludePhone) {
+    return stmts.contacts.all(String(excludePhone || '')).map((r) => ({
+      name: r.holder_name,
+      upiId: r.upi_id,
+    }));
+  }
+
+  /** Billers you can pay (mobile, electricity, …). */
+  function getBillers() {
+    return stmts.billers.all().map((r) => ({
+      upiId: r.upi_id,
+      name: r.holder_name,
+      category: r.category,
+    }));
   }
 
   function getUser(upiId) {
@@ -487,7 +534,7 @@ export function createStore({
   return {
     sendOtp, verifyOtp, sessionPhone,
     requestBankVerification, approveBankVerification, isBankApproved,
-    getBanks, getBank, getAccountsByPhone, getUser, requireUser, claimAccount, addAccount,
+    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, getUser, requireUser, claimAccount, addAccount,
     transfer, getTransactions,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,

@@ -97,6 +97,17 @@ export function createApp(store) {
     res.json({ token });
   });
 
+  // People you can pay (exclude yourself via ?exclude=<your upiId>).
+  app.get('/contacts', (req, res) => {
+    const me = req.query.exclude ? store.getUser(String(req.query.exclude)) : null;
+    res.json({ contacts: store.getContacts(me ? me.phone : '') });
+  });
+
+  // Billers you can pay (mobile, electricity, …).
+  app.get('/billers', (_req, res) => {
+    res.json({ billers: store.getBillers() });
+  });
+
   // Find the bank accounts linked to a phone number (sign-up / login).
   app.get('/accounts', (req, res) => {
     const phone = String(req.query.phone ?? '').trim();

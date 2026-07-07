@@ -7,7 +7,11 @@ const state = {
   pendingPhone: null, // phone being verified during sign-up
   resendTimer: null, // countdown interval for the "Resend code" button
   link: null, // account being linked via bank verification
+  bill: null, // biller being paid
 };
+
+// "Pay UPI ID" opens a blank Pay screen.
+document.getElementById('btn-pay-upi').addEventListener('click', () => payTo(''));
 
 /* ---------------- API helper ---------------- */
 async function api(path, options = {}) {
@@ -69,7 +73,126 @@ function renderHome() {
   $('#home-bank').textContent = `${state.user.bankName} · ${state.user.accountMasked}`;
   $('#home-balance').textContent = rupees(state.user.balanceRupees);
   refreshRequestBadge();
+  renderPeople();
+  renderBills();
 }
+
+/* ---------------- People (contacts) ---------------- */
+const AVATAR_COLORS = ['#6d5efc', '#e5484d', '#14a06b', '#b7791f', '#4b3fd6', '#0ea5e9'];
+const initials = (name) => name.split(/\s+/).map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+const colorFor = (s) => AVATAR_COLORS[[...s].reduce((a, c) => a + c.charCodeAt(0), 0) % AVATAR_COLORS.length];
+
+async function renderPeople() {
+  const row = $('#people-row');
+  try {
+    const { contacts } = await api(`/contacts?exclude=${encodeURIComponent(state.user.upiId)}`);
+    row.innerHTML = '';
+    for (const c of contacts) {
+      const b = document.createElement('button');
+      b.className = 'person';
+      b.dataset.pay = c.upiId;
+      b.innerHTML = `<span class="avatar" style="background:${colorFor(c.name)}">${escapeHtml(initials(c.name))}</span>
+        <span class="person-name">${escapeHtml(c.name.split(' ')[0])}</span>`;
+      row.appendChild(b);
+    }
+    const nw = document.createElement('button');
+    nw.className = 'person';
+    nw.id = 'person-new';
+    nw.innerHTML = `<span class="avatar new">＋</span><span class="person-name">New</span>`;
+    row.appendChild(nw);
+  } catch { row.innerHTML = ''; }
+}
+
+$('#people-row').addEventListener('click', (e) => {
+  const person = e.target.closest('[data-pay]');
+  const nw = e.target.closest('#person-new');
+  if (person) payTo(person.dataset.pay);
+  else if (nw) payTo('');
+});
+
+// Navigate to the Pay screen with the payee prefilled.
+function payTo(upiId) {
+  show('screen-pay');
+  $('#form-pay').reset();
+  $('#form-pay').to.value = upiId;
+}
+
+/* ---------------- Bills & recharges ---------------- */
+const BILL_ICONS = { mobile: '📱', electricity: '💡', dth: '📺', water: '💧', gas: '🔥' };
+const BILL_LABELS = { mobile: 'Mobile', electricity: 'Electricity', dth: 'DTH', water: 'Water', gas: 'Gas' };
+
+async function renderBills() {
+  const grid = $('#bills-grid');
+  try {
+    const { billers } = await api('/billers');
+    grid.innerHTML = '';
+    for (const b of billers) {
+      const el = document.createElement('button');
+      el.className = 'bill';
+      el.dataset.biller = b.upiId;
+      el.dataset.name = b.name;
+      el.dataset.category = b.category;
+      el.innerHTML = `<span class="bill-icon">${BILL_ICONS[b.category] || '🧾'}</span>
+        <span>${escapeHtml(BILL_LABELS[b.category] || b.category)}</span>`;
+      grid.appendChild(el);
+    }
+  } catch { grid.innerHTML = ''; }
+}
+
+$('#bills-grid').addEventListener('click', (e) => {
+  const bill = e.target.closest('[data-biller]');
+  if (bill) openBill(bill.dataset.biller, bill.dataset.name, bill.dataset.category);
+});
+
+function openBill(upiId, name, category) {
+  state.bill = { upiId, name, category };
+  $('#bill-title').textContent = `${BILL_LABELS[category] || 'Pay'} bill`;
+  $('#bill-biller').textContent = name;
+  $('#form-bill').reset();
+  populateBillFrom();
+  show('screen-bill');
+}
+
+async function populateBillFrom() {
+  const sel = $('#bill-from');
+  try {
+    const accounts = (await myAccounts()).filter((a) => a.claimed);
+    sel.innerHTML = '';
+    for (const a of accounts) {
+      const opt = document.createElement('option');
+      opt.value = a.upiId;
+      opt.textContent = `${a.bankName} ${a.accountMasked} — ₹${rupees(a.balanceRupees)}`;
+      if (a.upiId === state.user.upiId) opt.selected = true;
+      sel.appendChild(opt);
+    }
+  } catch {
+    sel.innerHTML = `<option value="${escapeAttr(state.user.upiId)}">${escapeHtml(state.user.upiId)}</option>`;
+  }
+}
+
+$('#form-bill').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  try {
+    const result = await api('/pay', {
+      method: 'POST',
+      body: JSON.stringify({
+        from: f.get('from') || state.user.upiId,
+        to: state.bill.upiId,
+        amount: Number(f.get('amount')),
+        note: `${state.bill.name} · ${f.get('consumer')}`,
+        pin: f.get('pin'),
+      }),
+    });
+    state.user = result.payer;
+    saveSession(result.payer.upiId);
+    renderHome();
+    toast(`Paid ₹${rupees(result.transaction.amountRupees)} to ${state.bill.name}`, 'ok');
+    show('screen-home');
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
 
 // Show a red badge on the Request tile with the count of pending incoming requests.
 async function refreshRequestBadge() {

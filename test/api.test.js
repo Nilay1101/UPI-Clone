@@ -161,6 +161,31 @@ test('OTP sends are capped per window', async () => {
   assert.match(res.body.error, /too many/);
 });
 
+test('GET /billers lists billers with categories', async () => {
+  const app = makeApp();
+  const res = await request(app).get('/billers').expect(200);
+  const cats = res.body.billers.map((b) => b.category).sort();
+  assert.deepEqual(cats, ['dth', 'electricity', 'gas', 'mobile', 'water']);
+});
+
+test('GET /contacts excludes your own accounts and dedupes people', async () => {
+  const app = makeApp();
+  const res = await request(app).get('/contacts').query({ exclude: 'ravi@hdfc' }).expect(200);
+  const names = res.body.contacts.map((c) => c.name).sort();
+  assert.deepEqual(names, ['Omar Khan', 'Priya Shah', 'Sara Ali']); // Ravi excluded, one per person
+});
+
+test('paying a bill is a normal PIN-authorised transfer to the biller', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc'); // 5000
+  const pay = await request(app)
+    .post('/pay')
+    .send({ from: 'ravi@hdfc', to: 'airtel@bill', amount: 200, note: '99xxxx0001', pin: PIN })
+    .expect(201);
+  assert.equal(pay.body.payer.balanceRupees, 4800);
+  assert.equal(pay.body.payee.name, 'Airtel Prepaid');
+});
+
 test('QR endpoint returns a upi:// link and PNG for an account', async () => {
   const app = makeApp();
   const res = await request(app).get('/users/priya@hdfc/qr').query({ amount: 250, note: 'Lunch' }).expect(200);

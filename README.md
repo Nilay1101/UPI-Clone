@@ -66,6 +66,11 @@ banks/accounts:
 4. A payer pays, **authorising with their PIN**; balances update atomically and
    both parties see the transaction in history.
 
+The home screen is **GPay-style**: a **People** row (tap a contact to pay),
+quick actions (Scan & Pay, Pay UPI ID, Receive, Request, History), and a
+**Bills & recharges** grid (mobile, electricity, DTH, water, gas — a bill
+payment is just a PIN-authorised transfer to the biller).
+
 You can also **request money** ("collect"): ask another user to pay you, and
 they approve (authorising with their PIN — which runs a normal transfer, so
 the PIN + lockout rules apply) or decline.
@@ -82,6 +87,8 @@ lock auto-expires.
 |--------|-------------------------------|----------------------------------------------|
 | GET    | `/health`                     | Liveness check                               |
 | GET    | `/banks`                      | List the (dummy) banks                       |
+| GET    | `/contacts?exclude=`          | People you can pay (one per person, excluding you) |
+| GET    | `/billers`                    | Billers you can pay (mobile, electricity, …) |
 | POST   | `/otp/send`                   | "Send" a code: `{ phone }` → `{ devCode }` (sim; rate-limited, 429 if too frequent) |
 | POST   | `/otp/verify`                 | Verify a code: `{ phone, code }` → `{ token }` |
 | GET    | `/accounts?phone=`            | Bank accounts linked to a phone              |

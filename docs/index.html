@@ -135,24 +135,57 @@
         <div id="switcher-list" class="accounts"></div>
       </div>
 
-      <div class="actions">
-        <button class="action" data-go="screen-pay">
-          <span class="action-icon">📷</span>
-          <span>Scan &amp; Pay</span>
+      <h3 class="section-title">People</h3>
+      <div id="people-row" class="people"></div>
+
+      <h3 class="section-title">Quick actions</h3>
+      <div class="quick">
+        <button class="quick-btn" data-go="screen-pay">
+          <span class="quick-icon">📷</span><span>Scan &amp; Pay</span>
         </button>
-        <button class="action" data-go="screen-receive">
-          <span class="action-icon">📥</span>
-          <span>Receive</span>
+        <button class="quick-btn" id="btn-pay-upi">
+          <span class="quick-icon">🏷️</span><span>Pay UPI ID</span>
         </button>
-        <button class="action" data-go="screen-request">
-          <span class="action-icon">🙋</span>
-          <span>Request</span>
+        <button class="quick-btn" data-go="screen-receive">
+          <span class="quick-icon">📥</span><span>Receive</span>
+        </button>
+        <button class="quick-btn" data-go="screen-request">
+          <span class="quick-icon">🙋</span><span>Request</span>
           <span id="req-badge" class="badge" hidden>0</span>
         </button>
-        <button class="action" data-go="screen-history">
-          <span class="action-icon">🧾</span>
-          <span>History</span>
+        <button class="quick-btn" data-go="screen-history">
+          <span class="quick-icon">🧾</span><span>History</span>
         </button>
+      </div>
+
+      <h3 class="section-title">Bills &amp; recharges</h3>
+      <div id="bills-grid" class="bills"></div>
+    </section>
+
+    <!-- ============ PAY A BILL ============ -->
+    <section id="screen-bill" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2 id="bill-title">Pay bill</h2>
+      </header>
+      <div class="card">
+        <p class="onboard-num">Biller: <span id="bill-biller">—</span></p>
+        <form id="form-bill">
+          <label>Pay from
+            <select name="from" id="bill-from"></select>
+          </label>
+          <label>Consumer / account number
+            <input name="consumer" placeholder="e.g. 9812345678" required />
+          </label>
+          <label>Amount (₹)
+            <input name="amount" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Your payment PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Pay bill</button>
+        </form>
       </div>
     </section>
 
