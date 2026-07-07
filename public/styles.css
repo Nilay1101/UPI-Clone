@@ -218,6 +218,24 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 .bill:active { transform: scale(0.97); }
 .bill-icon { font-size: 22px; }
 
+/* ---------- Biller list + bill ---------- */
+.biller-list { display: flex; flex-direction: column; gap: 10px; }
+.biller-item {
+  background: #fff; border: none; border-radius: 14px; padding: 16px;
+  display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer;
+  font-size: 15px; font-weight: 600; color: var(--ink); text-align: left;
+  box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05);
+}
+.biller-item:active { transform: scale(0.99); }
+.biller-item .bill-icon { font-size: 24px; }
+.bill-due {
+  display: flex; flex-direction: column; align-items: center; gap: 2px;
+  padding: 6px 0 10px; border-bottom: 1px solid var(--line); margin-bottom: 12px;
+}
+.bill-due-label { color: var(--muted); font-size: 13px; }
+.bill-due-amount { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
+.bill-meta { color: var(--muted); font-size: 12px; text-align: center; margin: 0 0 14px; }
+
 /* ---------- Sub screens ---------- */
 .sub-header { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
 .sub-header h2 { margin: 0; font-size: 18px; }

@@ -11,7 +11,7 @@
  * server); the lockout cooldown is 60 seconds instead of 15 minutes.
  */
 
-const DB_KEY = 'upi_demo_db_v3'; // v3: adds billers
+const DB_KEY = 'upi_demo_db_v4'; // v4: more billers per category
 const SESSION_KEY = 'upi_demo_current';
 const MAX_PIN_ATTEMPTS = 3;
 const LOCK_MS = 60 * 1000;
@@ -47,11 +47,16 @@ function seedDb() {
       'priya@sbi': acct('priya@sbi', 'sbi', '2002', 'Priya Shah', '+919820000002', 200000),
       'sara@enbd': acct('sara@enbd', 'enbd', '3001', 'Sara Ali', '+971501234567', 1000000),
       'omar@enbd': acct('omar@enbd', 'enbd', '3002', 'Omar Khan', '+971509876543', 700000),
-      'airtel@bill': biller('airtel@bill', 'Airtel Prepaid', 'mobile'),
+      'airtel@bill': biller('airtel@bill', 'Airtel', 'mobile'),
+      'jio@bill': biller('jio@bill', 'Jio', 'mobile'),
+      'vi@bill': biller('vi@bill', 'Vi (Vodafone Idea)', 'mobile'),
       'power@bill': biller('power@bill', 'State Electricity Board', 'electricity'),
-      'tataplay@bill': biller('tataplay@bill', 'Tata Play DTH', 'dth'),
+      'adani@bill': biller('adani@bill', 'Adani Electricity', 'electricity'),
+      'tataplay@bill': biller('tataplay@bill', 'Tata Play', 'dth'),
+      'dishtv@bill': biller('dishtv@bill', 'Dish TV', 'dth'),
       'water@bill': biller('water@bill', 'City Water Works', 'water'),
       'gas@bill': biller('gas@bill', 'Bharat Gas', 'gas'),
+      'indane@bill': biller('indane@bill', 'Indane Gas', 'gas'),
     },
     transactions: [],
     requests: [],
@@ -215,6 +220,27 @@ async function api(path, options = {}) {
       billers: Object.values(d.accounts)
         .filter((a) => a.kind === 'biller')
         .map((a) => ({ upiId: a.upiId, name: a.holderName, category: a.category })),
+    };
+  }
+
+  // "Fetch" a bill (deterministic simulated amount due + due date).
+  if (parts[0] === 'billers' && parts.length === 3 && parts[2] === 'fetch-bill' && method === 'POST') {
+    const upiId = decodeURIComponent(parts[1]);
+    const biller = d.accounts[upiId];
+    if (!biller || biller.kind !== 'biller') throw new Error(`'${upiId}' is not a biller`);
+    const c = String(body.consumer || '').trim();
+    if (!c) throw new Error('consumer number is required');
+    let hash = 0;
+    for (const ch of c + upiId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    const amountPaise = (200 + (hash % 2300)) * 100;
+    const days = 3 + (hash % 13);
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    return {
+      upiId, billerName: biller.holderName, category: biller.category, consumer: c,
+      amountRupees: paiseToRupees(amountPaise),
+      dueDate: new Date(Date.now() + days * 86400000).toISOString().slice(0, 10),
+      period: `${months[now.getMonth()]} ${now.getFullYear()}`,
     };
   }
 
@@ -391,7 +417,7 @@ async function api(path, options = {}) {
 /* ============================================================
  * UI (mirrors the real app's front-end)
  * ========================================================== */
-const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null, link: null, bill: null };
+const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null, link: null, bill: null, billers: [] };
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -482,38 +508,85 @@ function payTo(upiId) {
 /* ---- Bills & recharges ---- */
 const BILL_ICONS = { mobile: '📱', electricity: '💡', dth: '📺', water: '💧', gas: '🔥' };
 const BILL_LABELS = { mobile: 'Mobile', electricity: 'Electricity', dth: 'DTH', water: 'Water', gas: 'Gas' };
+const BILL_ORDER = ['mobile', 'electricity', 'dth', 'water', 'gas'];
 
 async function renderBills() {
   const grid = $('#bills-grid');
   try {
     const { billers } = await api('/billers');
+    state.billers = billers;
+    const cats = BILL_ORDER.filter((c) => billers.some((b) => b.category === c));
     grid.innerHTML = '';
-    for (const b of billers) {
+    for (const cat of cats) {
       const el = document.createElement('button');
       el.className = 'bill';
-      el.dataset.biller = b.upiId;
-      el.dataset.name = b.name;
-      el.dataset.category = b.category;
-      el.innerHTML = `<span class="bill-icon">${BILL_ICONS[b.category] || '🧾'}</span>
-        <span>${escapeHtml(BILL_LABELS[b.category] || b.category)}</span>`;
+      el.dataset.category = cat;
+      el.innerHTML = `<span class="bill-icon">${BILL_ICONS[cat] || '🧾'}</span>
+        <span>${escapeHtml(BILL_LABELS[cat] || cat)}</span>`;
       grid.appendChild(el);
     }
   } catch { grid.innerHTML = ''; }
 }
 
 $('#bills-grid').addEventListener('click', (e) => {
-  const bill = e.target.closest('[data-biller]');
-  if (bill) openBill(bill.dataset.biller, bill.dataset.name, bill.dataset.category);
+  const t = e.target.closest('[data-category]');
+  if (t) openCategory(t.dataset.category);
 });
 
-function openBill(upiId, name, category) {
-  state.bill = { upiId, name, category };
-  $('#bill-title').textContent = `${BILL_LABELS[category] || 'Pay'} bill`;
-  $('#bill-biller').textContent = name;
-  $('#form-bill').reset();
-  populateBillFrom();
+function openCategory(category) {
+  const list = (state.billers || []).filter((b) => b.category === category);
+  if (list.length === 1) return openBill(list[0], 'home');
+  $('#billers-title').textContent = `${BILL_LABELS[category] || 'Select'} — pick a biller`;
+  const el = $('#biller-list');
+  el.innerHTML = '';
+  for (const b of list) {
+    const item = document.createElement('button');
+    item.className = 'biller-item';
+    item.dataset.biller = b.upiId;
+    item.innerHTML = `<span class="bill-icon">${BILL_ICONS[category] || '🧾'}</span> ${escapeHtml(b.name)}`;
+    el.appendChild(item);
+  }
+  show('screen-billers');
+}
+
+$('#biller-list').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-biller]');
+  if (!t) return;
+  const b = (state.billers || []).find((x) => x.upiId === t.dataset.biller);
+  if (b) openBill(b, 'billers');
+});
+
+function openBill(biller, backTo) {
+  state.bill = { upiId: biller.upiId, name: biller.name, category: biller.category, backTo };
+  $('#bill-title').textContent = `${BILL_LABELS[biller.category] || 'Pay'} bill`;
+  $('#bill-biller').textContent = biller.name;
+  $('#form-fetch-bill').reset();
+  $('#bill-result').hidden = true;
   show('screen-bill');
 }
+
+$('#btn-bill-back').addEventListener('click', () => {
+  if (state.bill && state.bill.backTo === 'billers') show('screen-billers');
+  else show('screen-home');
+});
+
+$('#form-fetch-bill').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const consumer = new FormData(e.target).get('consumer').trim();
+  try {
+    const bill = await api(`/billers/${encodeURIComponent(state.bill.upiId)}/fetch-bill`, {
+      method: 'POST', body: JSON.stringify({ consumer }),
+    });
+    state.bill.consumer = consumer;
+    $('#bill-due').textContent = rupees(bill.amountRupees);
+    $('#bill-consumer').textContent = consumer;
+    $('#bill-duedate').textContent = bill.dueDate;
+    $('#bill-period').textContent = bill.period;
+    $('#form-bill').amount.value = bill.amountRupees;
+    await populateBillFrom();
+    $('#bill-result').hidden = false;
+  } catch (err) { toast(err.message, 'err'); }
+});
 
 async function populateBillFrom() {
   const sel = $('#bill-from');
@@ -542,7 +615,7 @@ $('#form-bill').addEventListener('submit', async (e) => {
         from: f.get('from') || state.user.upiId,
         to: state.bill.upiId,
         amount: Number(f.get('amount')),
-        note: `${state.bill.name} · ${f.get('consumer')}`,
+        note: `${state.bill.name} · ${state.bill.consumer}`,
         pin: f.get('pin'),
       }),
     });

@@ -45,11 +45,16 @@ const SEED_ACCOUNTS = [
 // Billers (businesses you can pay). They're payees with no bank/phone; a bill
 // payment is just a normal PIN-authorised transfer to the biller.
 const SEED_BILLERS = [
-  { upiId: 'airtel@bill', name: 'Airtel Prepaid', category: 'mobile' },
+  { upiId: 'airtel@bill', name: 'Airtel', category: 'mobile' },
+  { upiId: 'jio@bill', name: 'Jio', category: 'mobile' },
+  { upiId: 'vi@bill', name: 'Vi (Vodafone Idea)', category: 'mobile' },
   { upiId: 'power@bill', name: 'State Electricity Board', category: 'electricity' },
-  { upiId: 'tataplay@bill', name: 'Tata Play DTH', category: 'dth' },
+  { upiId: 'adani@bill', name: 'Adani Electricity', category: 'electricity' },
+  { upiId: 'tataplay@bill', name: 'Tata Play', category: 'dth' },
+  { upiId: 'dishtv@bill', name: 'Dish TV', category: 'dth' },
   { upiId: 'water@bill', name: 'City Water Works', category: 'water' },
   { upiId: 'gas@bill', name: 'Bharat Gas', category: 'gas' },
+  { upiId: 'indane@bill', name: 'Indane Gas', category: 'gas' },
 ];
 
 export function createStore({
@@ -156,6 +161,8 @@ export function createStore({
       phone: row.phone,
       balancePaise: row.balance_paise,
       claimed: !!row.claimed,
+      kind: row.kind,
+      category: row.category,
       createdAt: row.created_at,
     };
 
@@ -365,6 +372,34 @@ export function createStore({
     }));
   }
 
+  /**
+   * "Fetch" a bill for a consumer number — a deterministic simulated bill
+   * (amount due, due date, period) so re-fetching the same number is stable.
+   * There's no real biller integration.
+   */
+  function fetchBill(upiId, consumer) {
+    const biller = requireUser(upiId, 'biller');
+    if (biller.kind !== 'biller') throw new ApiError(400, `'${upiId}' is not a biller`);
+    const c = String(consumer || '').trim();
+    if (!c) throw new ApiError(400, 'consumer number is required');
+
+    let hash = 0;
+    for (const ch of c + upiId) hash = (hash * 31 + ch.charCodeAt(0)) >>> 0;
+    const amountPaise = (200 + (hash % 2300)) * 100; // ₹200–₹2499
+    const days = 3 + (hash % 13); // due in 3–15 days
+    const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const now = new Date();
+    return {
+      upiId,
+      billerName: biller.holderName,
+      category: biller.category,
+      consumer: c,
+      amountPaise,
+      dueDate: new Date(Date.now() + days * 86400000).toISOString().slice(0, 10),
+      period: `${months[now.getMonth()]} ${now.getFullYear()}`,
+    };
+  }
+
   function getUser(upiId) {
     return toAccount(stmts.getAccount.get(upiId)) || null;
   }
@@ -534,7 +569,7 @@ export function createStore({
   return {
     sendOtp, verifyOtp, sessionPhone,
     requestBankVerification, approveBankVerification, isBankApproved,
-    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, getUser, requireUser, claimAccount, addAccount,
+    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, fetchBill, getUser, requireUser, claimAccount, addAccount,
     transfer, getTransactions,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,

@@ -8,6 +8,7 @@ const state = {
   resendTimer: null, // countdown interval for the "Resend code" button
   link: null, // account being linked via bank verification
   bill: null, // biller being paid
+  billers: [], // cached list of billers
 };
 
 // "Pay UPI ID" opens a blank Pay screen.
@@ -120,38 +121,90 @@ function payTo(upiId) {
 /* ---------------- Bills & recharges ---------------- */
 const BILL_ICONS = { mobile: '📱', electricity: '💡', dth: '📺', water: '💧', gas: '🔥' };
 const BILL_LABELS = { mobile: 'Mobile', electricity: 'Electricity', dth: 'DTH', water: 'Water', gas: 'Gas' };
+const BILL_ORDER = ['mobile', 'electricity', 'dth', 'water', 'gas'];
 
 async function renderBills() {
   const grid = $('#bills-grid');
   try {
     const { billers } = await api('/billers');
+    state.billers = billers;
+    const cats = BILL_ORDER.filter((c) => billers.some((b) => b.category === c));
     grid.innerHTML = '';
-    for (const b of billers) {
+    for (const cat of cats) {
       const el = document.createElement('button');
       el.className = 'bill';
-      el.dataset.biller = b.upiId;
-      el.dataset.name = b.name;
-      el.dataset.category = b.category;
-      el.innerHTML = `<span class="bill-icon">${BILL_ICONS[b.category] || '🧾'}</span>
-        <span>${escapeHtml(BILL_LABELS[b.category] || b.category)}</span>`;
+      el.dataset.category = cat;
+      el.innerHTML = `<span class="bill-icon">${BILL_ICONS[cat] || '🧾'}</span>
+        <span>${escapeHtml(BILL_LABELS[cat] || cat)}</span>`;
       grid.appendChild(el);
     }
   } catch { grid.innerHTML = ''; }
 }
 
 $('#bills-grid').addEventListener('click', (e) => {
-  const bill = e.target.closest('[data-biller]');
-  if (bill) openBill(bill.dataset.biller, bill.dataset.name, bill.dataset.category);
+  const t = e.target.closest('[data-category]');
+  if (t) openCategory(t.dataset.category);
 });
 
-function openBill(upiId, name, category) {
-  state.bill = { upiId, name, category };
-  $('#bill-title').textContent = `${BILL_LABELS[category] || 'Pay'} bill`;
-  $('#bill-biller').textContent = name;
-  $('#form-bill').reset();
-  populateBillFrom();
+// A category may have several operators — show the list, or skip it if there's one.
+function openCategory(category) {
+  const list = (state.billers || []).filter((b) => b.category === category);
+  if (list.length === 1) return openBill(list[0], 'home');
+  $('#billers-title').textContent = `${BILL_LABELS[category] || 'Select'} — pick a biller`;
+  const el = $('#biller-list');
+  el.innerHTML = '';
+  for (const b of list) {
+    const item = document.createElement('button');
+    item.className = 'biller-item';
+    item.dataset.biller = b.upiId;
+    item.innerHTML = `<span class="bill-icon">${BILL_ICONS[category] || '🧾'}</span> ${escapeHtml(b.name)}`;
+    el.appendChild(item);
+  }
+  show('screen-billers');
+}
+
+$('#biller-list').addEventListener('click', (e) => {
+  const t = e.target.closest('[data-biller]');
+  if (!t) return;
+  const b = (state.billers || []).find((x) => x.upiId === t.dataset.biller);
+  if (b) openBill(b, 'billers');
+});
+
+function openBill(biller, backTo) {
+  state.bill = { upiId: biller.upiId, name: biller.name, category: biller.category, backTo };
+  $('#bill-title').textContent = `${BILL_LABELS[biller.category] || 'Pay'} bill`;
+  $('#bill-biller').textContent = biller.name;
+  $('#form-fetch-bill').reset();
+  $('#bill-result').hidden = true;
   show('screen-bill');
 }
+
+$('#btn-bill-back').addEventListener('click', () => {
+  if (state.bill && state.bill.backTo === 'billers') show('screen-billers');
+  else show('screen-home');
+});
+
+// "Fetch" the bill for the entered consumer number → show amount due + details.
+$('#form-fetch-bill').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const consumer = new FormData(e.target).get('consumer').trim();
+  try {
+    const bill = await api(`/billers/${encodeURIComponent(state.bill.upiId)}/fetch-bill`, {
+      method: 'POST',
+      body: JSON.stringify({ consumer }),
+    });
+    state.bill.consumer = consumer;
+    $('#bill-due').textContent = rupees(bill.amountRupees);
+    $('#bill-consumer').textContent = consumer;
+    $('#bill-duedate').textContent = bill.dueDate;
+    $('#bill-period').textContent = bill.period;
+    $('#form-bill').amount.value = bill.amountRupees;
+    await populateBillFrom();
+    $('#bill-result').hidden = false;
+  } catch (err) {
+    toast(err.message, 'err');
+  }
+});
 
 async function populateBillFrom() {
   const sel = $('#bill-from');
@@ -180,7 +233,7 @@ $('#form-bill').addEventListener('submit', async (e) => {
         from: f.get('from') || state.user.upiId,
         to: state.bill.upiId,
         amount: Number(f.get('amount')),
-        note: `${state.bill.name} · ${f.get('consumer')}`,
+        note: `${state.bill.name} · ${state.bill.consumer}`,
         pin: f.get('pin'),
       }),
     });

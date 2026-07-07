@@ -161,11 +161,34 @@ test('OTP sends are capped per window', async () => {
   assert.match(res.body.error, /too many/);
 });
 
-test('GET /billers lists billers with categories', async () => {
+test('GET /billers lists multiple billers per category', async () => {
   const app = makeApp();
   const res = await request(app).get('/billers').expect(200);
-  const cats = res.body.billers.map((b) => b.category).sort();
-  assert.deepEqual(cats, ['dth', 'electricity', 'gas', 'mobile', 'water']);
+  const mobile = res.body.billers.filter((b) => b.category === 'mobile').map((b) => b.name).sort();
+  assert.deepEqual(mobile, ['Airtel', 'Jio', 'Vi (Vodafone Idea)']);
+});
+
+test('fetch-bill returns a stable amount due, due date and period', async () => {
+  const app = makeApp();
+  const first = await request(app)
+    .post('/billers/power@bill/fetch-bill')
+    .send({ consumer: 'EB-9988' })
+    .expect(200);
+  assert.ok(first.body.amountRupees >= 200 && first.body.amountRupees <= 2499);
+  assert.match(first.body.dueDate, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(first.body.billerName, 'State Electricity Board');
+  // Deterministic: same consumer → same amount.
+  const again = await request(app)
+    .post('/billers/power@bill/fetch-bill')
+    .send({ consumer: 'EB-9988' })
+    .expect(200);
+  assert.equal(again.body.amountRupees, first.body.amountRupees);
+});
+
+test('fetch-bill rejects a non-biller and a missing consumer number', async () => {
+  const app = makeApp();
+  await request(app).post('/billers/ravi@hdfc/fetch-bill').send({ consumer: '1' }).expect(400);
+  await request(app).post('/billers/power@bill/fetch-bill').send({}).expect(400);
 });
 
 test('GET /contacts excludes your own accounts and dedupes people', async () => {
@@ -183,7 +206,7 @@ test('paying a bill is a normal PIN-authorised transfer to the biller', async ()
     .send({ from: 'ravi@hdfc', to: 'airtel@bill', amount: 200, note: '99xxxx0001', pin: PIN })
     .expect(201);
   assert.equal(pay.body.payer.balanceRupees, 4800);
-  assert.equal(pay.body.payee.name, 'Airtel Prepaid');
+  assert.equal(pay.body.payee.name, 'Airtel');
 });
 
 test('QR endpoint returns a upi:// link and PNG for an account', async () => {

@@ -108,6 +108,21 @@ export function createApp(store) {
     res.json({ billers: store.getBillers() });
   });
 
+  // "Fetch" a bill for a consumer number (simulated amount due + due date).
+  app.post('/billers/:upiId/fetch-bill', (req, res) => {
+    const { consumer } = req.body ?? {};
+    const bill = store.fetchBill(req.params.upiId, consumer);
+    res.json({
+      upiId: bill.upiId,
+      billerName: bill.billerName,
+      category: bill.category,
+      consumer: bill.consumer,
+      amountRupees: paiseToRupees(bill.amountPaise),
+      dueDate: bill.dueDate,
+      period: bill.period,
+    });
+  });
+
   // Find the bank accounts linked to a phone number (sign-up / login).
   app.get('/accounts', (req, res) => {
     const phone = String(req.query.phone ?? '').trim();

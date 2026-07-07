@@ -68,8 +68,10 @@ banks/accounts:
 
 The home screen is **GPay-style**: a **People** row (tap a contact to pay),
 quick actions (Scan & Pay, Pay UPI ID, Receive, Request, History), and a
-**Bills & recharges** grid (mobile, electricity, DTH, water, gas — a bill
-payment is just a PIN-authorised transfer to the biller).
+**Bills & recharges** grid (mobile, electricity, DTH, water, gas). Each
+category lists **operators** (Airtel/Jio/Vi, …); you enter a consumer number,
+**fetch the bill** (a simulated amount due + due date + period), then pay it —
+a bill payment is just a PIN-authorised transfer to the biller.
 
 You can also **request money** ("collect"): ask another user to pay you, and
 they approve (authorising with their PIN — which runs a normal transfer, so
@@ -89,6 +91,7 @@ lock auto-expires.
 | GET    | `/banks`                      | List the (dummy) banks                       |
 | GET    | `/contacts?exclude=`          | People you can pay (one per person, excluding you) |
 | GET    | `/billers`                    | Billers you can pay (mobile, electricity, …) |
+| POST   | `/billers/:upiId/fetch-bill`  | Simulated bill for a consumer no.: `{ consumer }` → amount due, due date |
 | POST   | `/otp/send`                   | "Send" a code: `{ phone }` → `{ devCode }` (sim; rate-limited, 429 if too frequent) |
 | POST   | `/otp/verify`                 | Verify a code: `{ phone, code }` → `{ token }` |
 | GET    | `/accounts?phone=`            | Bank accounts linked to a phone              |
