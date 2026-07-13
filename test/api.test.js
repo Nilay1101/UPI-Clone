@@ -198,6 +198,33 @@ test('GET /contacts excludes your own accounts and dedupes people', async () => 
   assert.deepEqual(names, ['Omar Khan', 'Priya Shah', 'Sara Ali']); // Ravi excluded, one per person
 });
 
+test('GET /search finds people by name and UPI ID, excluding yourself', async () => {
+  const app = makeApp();
+  const res = await request(app).get('/search').query({ q: 'priya', exclude: 'ravi@hdfc' }).expect(200);
+  assert.deepEqual(res.body.people.map((p) => p.name), ['Priya Shah']); // deduped to one row
+  assert.ok(res.body.people[0].upiId); // has a payable UPI ID
+  assert.deepEqual(res.body.billers, []);
+
+  const byId = await request(app).get('/search').query({ q: 'sara@' }).expect(200);
+  assert.deepEqual(byId.body.people.map((p) => p.name), ['Sara Ali']);
+});
+
+test('GET /search finds billers by name and category', async () => {
+  const app = makeApp();
+  const byName = await request(app).get('/search').query({ q: 'airtel' }).expect(200);
+  assert.deepEqual(byName.body.billers.map((b) => b.upiId), ['airtel@bill']);
+
+  const byCat = await request(app).get('/search').query({ q: 'electricity' }).expect(200);
+  const ids = byCat.body.billers.map((b) => b.upiId).sort();
+  assert.deepEqual(ids, ['adani@bill', 'power@bill']);
+});
+
+test('GET /search with a blank query returns empty results', async () => {
+  const app = makeApp();
+  const res = await request(app).get('/search').query({ q: '  ' }).expect(200);
+  assert.deepEqual(res.body, { people: [], billers: [] });
+});
+
 test('paying a bill is a normal PIN-authorised transfer to the biller', async () => {
   const app = makeApp();
   await claim(app, 'ravi@hdfc'); // 5000

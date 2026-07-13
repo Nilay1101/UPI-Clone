@@ -116,6 +116,11 @@
         <button class="link-btn" id="btn-logout">Sign out</button>
       </header>
 
+      <button class="search-bar" id="btn-search" type="button">
+        <span class="search-icon">🔍</span>
+        <span class="search-placeholder">Pay people, billers &amp; UPI IDs</span>
+      </button>
+
       <div class="balance-card">
         <p class="balance-label">Balance</p>
         <p class="balance-amount">₹<span id="home-balance">0.00</span></p>
@@ -156,6 +161,22 @@
 
       <h3 class="section-title">Bills &amp; recharges</h3>
       <div id="bills-grid" class="bills"></div>
+    </section>
+
+    <!-- ============ SEARCH ============ -->
+    <section id="screen-search" class="screen" hidden>
+      <header class="sub-header search-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <div class="search-input-wrap">
+          <span class="search-icon">🔍</span>
+          <input id="search-input" type="search" autocomplete="off"
+                 placeholder="Pay people, billers & UPI IDs" aria-label="Search" />
+        </div>
+      </header>
+      <div id="search-results" class="search-results">
+        <p class="search-empty">Search for a person, a biller, or type a UPI ID like
+          <code>priya@hdfc</code>.</p>
+      </div>
     </section>
 
     <!-- ============ SELECT BILLER ============ -->

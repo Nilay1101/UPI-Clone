@@ -108,6 +108,12 @@ export function createApp(store) {
     res.json({ billers: store.getBillers() });
   });
 
+  // Search people (by name/UPI ID) and billers (by name/category).
+  app.get('/search', (req, res) => {
+    const me = req.query.exclude ? store.getUser(String(req.query.exclude)) : null;
+    res.json(store.search(String(req.query.q ?? ''), me ? me.phone : ''));
+  });
+
   // "Fetch" a bill for a consumer number (simulated amount due + due date).
   app.post('/billers/:upiId/fetch-bill', (req, res) => {
     const { consumer } = req.body ?? {};

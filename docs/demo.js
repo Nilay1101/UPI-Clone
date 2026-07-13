@@ -223,6 +223,33 @@ async function api(path, options = {}) {
     };
   }
 
+  // Search people (by name/UPI ID) and billers (by name/category).
+  if (rawPath === '/search' && method === 'GET') {
+    const term = String(params.get('q') || '').trim().toLowerCase();
+    if (!term) return { people: [], billers: [] };
+    const me = params.get('exclude') ? d.accounts[decodeURIComponent(params.get('exclude'))] : null;
+    const excludePhone = me ? me.phone : '';
+    const seen = new Set();
+    const people = [];
+    const billers = [];
+    for (const a of Object.values(d.accounts)) {
+      if (a.kind === 'personal') {
+        if (a.phone === excludePhone || seen.has(a.holderName)) continue;
+        if (a.holderName.toLowerCase().includes(term) || a.upiId.toLowerCase().includes(term)) {
+          seen.add(a.holderName);
+          people.push({ name: a.holderName, upiId: a.upiId });
+        }
+      } else if (a.kind === 'biller') {
+        if (a.holderName.toLowerCase().includes(term) || (a.category || '').toLowerCase().includes(term)) {
+          billers.push({ upiId: a.upiId, name: a.holderName, category: a.category });
+        }
+      }
+    }
+    people.sort((x, y) => x.name.localeCompare(y.name));
+    billers.sort((x, y) => x.name.localeCompare(y.name));
+    return { people, billers };
+  }
+
   // "Fetch" a bill (deterministic simulated amount due + due date).
   if (parts[0] === 'billers' && parts.length === 3 && parts[2] === 'fetch-bill' && method === 'POST') {
     const upiId = decodeURIComponent(parts[1]);
@@ -505,6 +532,82 @@ function payTo(upiId) {
   $('#form-pay').to.value = upiId;
 }
 
+/* ---- Search ---- */
+let searchTimer;
+document.getElementById('btn-search').addEventListener('click', () => {
+  $('#search-input').value = '';
+  renderSearch({ people: [], billers: [] }, '');
+  show('screen-search');
+  setTimeout(() => $('#search-input').focus(), 50);
+});
+
+$('#search-input').addEventListener('input', (e) => {
+  const q = e.target.value.trim();
+  clearTimeout(searchTimer);
+  if (!q) return renderSearch({ people: [], billers: [] }, '');
+  searchTimer = setTimeout(async () => {
+    try {
+      const results = await api(
+        `/search?q=${encodeURIComponent(q)}&exclude=${encodeURIComponent(state.user.upiId)}`,
+      );
+      renderSearch(results, q);
+    } catch { /* keep prior results on transient error */ }
+  }, 200);
+});
+
+function renderSearch({ people, billers }, q) {
+  const box = $('#search-results');
+  box.innerHTML = '';
+
+  const looksLikeVpa = /^[\w.\-]+@[\w.\-]+$/.test(q);
+  if (looksLikeVpa && !people.some((p) => p.upiId.toLowerCase() === q.toLowerCase())) {
+    box.appendChild(searchRow('＠', `Pay ${q}`, 'UPI ID', () => payTo(q)));
+  }
+
+  if (people.length) {
+    box.appendChild(sectionTitle('People'));
+    for (const p of people) {
+      const av = `<span class="avatar" style="background:${colorFor(p.name)}">${escapeHtml(initials(p.name))}</span>`;
+      box.appendChild(searchRow(av, p.name, p.upiId, () => payTo(p.upiId)));
+    }
+  }
+  if (billers.length) {
+    box.appendChild(sectionTitle('Billers'));
+    for (const b of billers) {
+      const icon = BILL_ICONS[b.category] || '🧾';
+      box.appendChild(searchRow(icon, b.name, BILL_LABELS[b.category] || b.category,
+        () => openBill(b, 'search')));
+    }
+  }
+
+  if (!box.children.length) {
+    const p = document.createElement('p');
+    p.className = 'search-empty';
+    p.innerHTML = q
+      ? `No matches for “${escapeHtml(q)}”.`
+      : 'Search for a person, a biller, or type a UPI ID like <code>priya@hdfc</code>.';
+    box.appendChild(p);
+  }
+}
+
+function sectionTitle(text) {
+  const h = document.createElement('h3');
+  h.className = 'section-title';
+  h.textContent = text;
+  return h;
+}
+
+function searchRow(iconHtml, title, sub, onClick) {
+  const btn = document.createElement('button');
+  btn.className = 'search-row';
+  const icon = iconHtml.startsWith('<') ? iconHtml : `<span class="search-row-icon">${iconHtml}</span>`;
+  btn.innerHTML = `${icon}<span class="search-row-text">
+    <span class="search-row-title">${escapeHtml(title)}</span>
+    <span class="search-row-sub">${escapeHtml(sub)}</span></span>`;
+  btn.addEventListener('click', onClick);
+  return btn;
+}
+
 /* ---- Bills & recharges ---- */
 const BILL_ICONS = { mobile: '📱', electricity: '💡', dth: '📺', water: '💧', gas: '🔥' };
 const BILL_LABELS = { mobile: 'Mobile', electricity: 'Electricity', dth: 'DTH', water: 'Water', gas: 'Gas' };
@@ -566,7 +669,9 @@ function openBill(biller, backTo) {
 }
 
 $('#btn-bill-back').addEventListener('click', () => {
-  if (state.bill && state.bill.backTo === 'billers') show('screen-billers');
+  const back = state.bill && state.bill.backTo;
+  if (back === 'billers') show('screen-billers');
+  else if (back === 'search') show('screen-search');
   else show('screen-home');
 });
 

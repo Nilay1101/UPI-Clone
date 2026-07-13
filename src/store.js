@@ -196,6 +196,15 @@ export function createStore({
     billers: db.prepare(
       `SELECT upi_id, holder_name, category FROM accounts WHERE kind = 'biller' ORDER BY holder_name`,
     ),
+    searchPeople: db.prepare(
+      `SELECT holder_name, MIN(upi_id) AS upi_id FROM accounts
+       WHERE kind = 'personal' AND phone <> ? AND (holder_name LIKE ? OR upi_id LIKE ?)
+       GROUP BY holder_name ORDER BY holder_name`,
+    ),
+    searchBillers: db.prepare(
+      `SELECT upi_id, holder_name, category FROM accounts
+       WHERE kind = 'biller' AND (holder_name LIKE ? OR category LIKE ?) ORDER BY holder_name`,
+    ),
     insertAccount: db.prepare(
       `INSERT INTO accounts (upi_id, bank_id, account_number, holder_name, phone, balance_paise, created_at)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -400,6 +409,25 @@ export function createStore({
     };
   }
 
+  /**
+   * Search people (by name or UPI ID) and billers (by name or category) for
+   * the home-screen search bar. `excludePhone` drops the searcher's own
+   * accounts from the People results.
+   */
+  function search(q, excludePhone) {
+    const term = String(q || '').trim();
+    if (!term) return { people: [], billers: [] };
+    const like = `%${term}%`;
+    return {
+      people: stmts.searchPeople
+        .all(String(excludePhone || ''), like, like)
+        .map((r) => ({ name: r.holder_name, upiId: r.upi_id })),
+      billers: stmts.searchBillers
+        .all(like, like)
+        .map((r) => ({ upiId: r.upi_id, name: r.holder_name, category: r.category })),
+    };
+  }
+
   function getUser(upiId) {
     return toAccount(stmts.getAccount.get(upiId)) || null;
   }
@@ -569,7 +597,7 @@ export function createStore({
   return {
     sendOtp, verifyOtp, sessionPhone,
     requestBankVerification, approveBankVerification, isBankApproved,
-    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, fetchBill, getUser, requireUser, claimAccount, addAccount,
+    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, fetchBill, search, getUser, requireUser, claimAccount, addAccount,
     transfer, getTransactions,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,

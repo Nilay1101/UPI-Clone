@@ -236,6 +236,37 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 .bill-due-amount { font-size: 30px; font-weight: 700; letter-spacing: -0.5px; }
 .bill-meta { color: var(--muted); font-size: 12px; text-align: center; margin: 0 0 14px; }
 
+/* ---------- Search ---------- */
+.search-bar {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px;
+  padding: 12px 14px; margin-bottom: 16px; cursor: text; text-align: left;
+}
+.search-bar .search-placeholder { color: var(--muted); font-size: 14px; }
+.search-icon { font-size: 15px; opacity: 0.7; }
+.search-header { margin-bottom: 14px; }
+.search-input-wrap {
+  flex: 1; display: flex; align-items: center; gap: 8px;
+  background: #fff; border: 1px solid var(--line); border-radius: 12px; padding: 9px 12px;
+}
+.search-input-wrap:focus-within { border-color: var(--violet); box-shadow: 0 0 0 3px rgba(109, 94, 252, 0.15); }
+#search-input { flex: 1; border: none; outline: none; font-size: 15px; color: var(--ink); background: none; }
+.search-results { display: flex; flex-direction: column; gap: 4px; }
+.search-results .section-title { margin-top: 10px; }
+.search-empty { color: var(--muted); font-size: 14px; text-align: center; padding: 20px 10px; }
+.search-row {
+  display: flex; align-items: center; gap: 12px; width: 100%; cursor: pointer;
+  background: #fff; border: none; border-radius: 12px; padding: 12px 14px; text-align: left;
+  box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05);
+}
+.search-row:active { transform: scale(0.99); }
+.search-row-icon, .search-row .avatar { flex: 0 0 auto; font-size: 22px; width: 40px; height: 40px;
+  display: flex; align-items: center; justify-content: center; }
+.search-row .avatar { border-radius: 50%; color: #fff; font-size: 14px; font-weight: 700; }
+.search-row-text { display: flex; flex-direction: column; min-width: 0; }
+.search-row-title { font-size: 15px; font-weight: 600; color: var(--ink); }
+.search-row-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* ---------- Sub screens ---------- */
 .sub-header { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
 .sub-header h2 { margin: 0; font-size: 18px; }
