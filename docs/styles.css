@@ -301,3 +301,20 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 .search-row-text { display: flex; flex-direction: column; min-width: 0; }
 .search-row-title { font-size: 15px; font-weight: 600; color: var(--ink); }
 .search-row-sub { font-size: 12px; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* ---------- Payment success / receipt ---------- */
+.receipt { text-align: center; padding-top: 12px; }
+.tick-wrap { width: 84px; height: 84px; margin: 8px auto 16px; border-radius: 50%; background: #e6f6ee; display: grid; place-items: center; animation: pop 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.3); }
+.tick { width: 56px; height: 56px; border-radius: 50%; background: var(--green); color: #fff; font-size: 30px; font-weight: 700; display: grid; place-items: center; }
+@keyframes pop { 0% { transform: scale(0); } 100% { transform: scale(1); } }
+.receipt-amount { font-size: 34px; font-weight: 700; letter-spacing: -0.5px; margin: 0; }
+.receipt-status { color: var(--green); font-size: 14px; font-weight: 600; margin: 4px 0 20px; }
+.receipt-card { background: #fff; border-radius: 16px; padding: 6px 16px; text-align: left; box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05); margin-bottom: 20px; }
+.rc-row { display: flex; justify-content: space-between; align-items: baseline; gap: 14px; padding: 12px 0; border-bottom: 1px solid var(--line); font-size: 14px; }
+.rc-row:last-child { border-bottom: none; }
+.rc-row[hidden] { display: none; }
+.rc-key { color: var(--muted); flex: 0 0 auto; }
+.rc-row > span:last-child { text-align: right; word-break: break-word; color: var(--ink); font-weight: 500; }
+.rc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
+.receipt-actions { display: flex; gap: 10px; }
+.receipt-actions .btn { flex: 1; }

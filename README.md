@@ -64,7 +64,9 @@ banks/accounts:
    profile can link **several accounts** and choose which to pay from.
 3. A payee shows a **QR code** (a `upi://pay` link) or you enter a UPI ID.
 4. A payer pays, **authorising with their PIN**; balances update atomically and
-   both parties see the transaction in history.
+   both parties see the transaction in history. A successful payment shows a
+   **receipt screen** (green tick, amount, payee, source account, transaction
+   ID, date) with a **Share receipt** option.
 
 The home screen is **GPay-style**: a **search bar** (find a person by name or
 UPI ID, a biller by name or category, or just type any UPI ID to pay it), a

@@ -334,6 +334,28 @@
       </header>
       <div id="history-list" class="history"></div>
     </section>
+
+    <!-- ============ PAYMENT SUCCESS / RECEIPT ============ -->
+    <section id="screen-success" class="screen" hidden>
+      <div class="receipt">
+        <div class="tick-wrap"><div class="tick">✓</div></div>
+        <p class="receipt-amount">₹<span id="rc-amount">0.00</span></p>
+        <p class="receipt-status" id="rc-status">Paid successfully</p>
+
+        <div class="receipt-card">
+          <div class="rc-row"><span class="rc-key">To</span><span id="rc-to">—</span></div>
+          <div class="rc-row"><span class="rc-key">From</span><span id="rc-from">—</span></div>
+          <div class="rc-row" id="rc-note-row"><span class="rc-key">Note</span><span id="rc-note">—</span></div>
+          <div class="rc-row"><span class="rc-key">Transaction ID</span><span id="rc-id" class="rc-mono">—</span></div>
+          <div class="rc-row"><span class="rc-key">Date &amp; time</span><span id="rc-date">—</span></div>
+        </div>
+
+        <div class="receipt-actions">
+          <button class="btn" id="btn-share-receipt">Share receipt</button>
+          <button class="btn primary" id="btn-receipt-done">Done</button>
+        </div>
+      </div>
+    </section>
   </div>
 
   <!-- QR scanning library (only needed on the Pay screen) -->

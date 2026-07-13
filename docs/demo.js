@@ -444,7 +444,7 @@ async function api(path, options = {}) {
 /* ============================================================
  * UI (mirrors the real app's front-end)
  * ========================================================== */
-const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null, link: null, bill: null, billers: [] };
+const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null, link: null, bill: null, billers: [], lastReceipt: null };
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -531,6 +531,45 @@ function payTo(upiId) {
   $('#form-pay').reset();
   $('#form-pay').to.value = upiId;
 }
+
+/* ---- Payment success / receipt ---- */
+function showReceipt(result, statusText = 'Paid successfully') {
+  const { transaction: t, payer, payee } = result;
+  state.lastReceipt = result;
+  $('#rc-amount').textContent = rupees(t.amountRupees);
+  $('#rc-status').textContent = statusText;
+  $('#rc-to').textContent = `${payee.name} · ${t.to}`;
+  $('#rc-from').textContent = `${payer.bankName} · ${payer.accountMasked}`;
+  const noteRow = $('#rc-note-row');
+  if (t.note) { $('#rc-note').textContent = t.note; noteRow.hidden = false; }
+  else noteRow.hidden = true;
+  $('#rc-id').textContent = t.id;
+  $('#rc-date').textContent = new Date(t.createdAt).toLocaleString('en-IN');
+  show('screen-success');
+}
+
+function receiptText(r) {
+  const t = r.transaction;
+  return [
+    'Payment receipt',
+    `₹${rupees(t.amountRupees)} paid to ${r.payee.name} (${t.to})`,
+    `From: ${r.payer.bankName} · ${r.payer.accountMasked}`,
+    t.note ? `Note: ${t.note}` : null,
+    `Transaction ID: ${t.id}`,
+    new Date(t.createdAt).toLocaleString('en-IN'),
+  ].filter(Boolean).join('\n');
+}
+
+$('#btn-share-receipt').addEventListener('click', async () => {
+  if (!state.lastReceipt) return;
+  const text = receiptText(state.lastReceipt);
+  try {
+    if (navigator.share) await navigator.share({ title: 'Payment receipt', text });
+    else { await navigator.clipboard.writeText(text); toast('Receipt copied to clipboard', 'ok'); }
+  } catch { /* user dismissed the share sheet */ }
+});
+
+$('#btn-receipt-done').addEventListener('click', () => show('screen-home'));
 
 /* ---- Search ---- */
 let searchTimer;
@@ -727,8 +766,7 @@ $('#form-bill').addEventListener('submit', async (e) => {
     state.user = result.payer;
     saveSession(result.payer.upiId);
     renderHome();
-    toast(`Paid ₹${rupees(result.transaction.amountRupees)} to ${state.bill.name}`, 'ok');
-    show('screen-home');
+    showReceipt(result, `Bill paid to ${state.bill.name}`);
   } catch (err) { toast(err.message, 'err'); }
 });
 
@@ -1058,8 +1096,7 @@ $('#form-pay').addEventListener('submit', async (e) => {
     renderHome();
     e.target.reset();
     $('#qr-result') && ($('#qr-result').hidden = true);
-    toast(`Paid ₹${rupees(result.transaction.amountRupees)} to ${result.payee.name}`, 'ok');
-    show('screen-home');
+    showReceipt(result);
   } catch (err) { toast(err.message, 'err'); }
 });
 
@@ -1085,8 +1122,8 @@ async function approveRequest(id) {
     const result = await api(`/requests/${id}/approve`, { method: 'POST', body: JSON.stringify({ pin }) });
     state.user = result.payer;
     renderHome();
-    toast(`Paid ₹${rupees(result.transaction.amountRupees)} to ${result.payee.name}`, 'ok');
     loadRequests();
+    showReceipt(result);
   } catch (err) { toast(err.message, 'err'); }
 }
 async function declineRequest(id) {
