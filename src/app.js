@@ -236,6 +236,7 @@ export function createApp(store) {
       transaction: serializeTxn(txn),
       payer: serializeUser(store.getUser(from)),
       payee: serializeUser(store.getUser(to)),
+      cardEarned: !!txn.cardId, // the payer earned a scratch card
     });
   });
 
@@ -271,6 +272,7 @@ export function createApp(store) {
       transaction: serializeTxn(transaction),
       payer: serializeUser(store.getUser(request.to)),
       payee: serializeUser(store.getUser(request.from)),
+      cardEarned: !!transaction.cardId,
     });
   });
 
@@ -278,6 +280,61 @@ export function createApp(store) {
   app.post('/requests/:id/decline', (req, res) => {
     const request = store.declineRequest(req.params.id);
     res.json(serializeRequest(request));
+  });
+
+  // Change the UPI PIN (requires the current PIN): { oldPin, newPin }.
+  app.post('/users/:upiId/change-pin', (req, res) => {
+    const { oldPin, newPin } = req.body ?? {};
+    if (!oldPin || !newPin) throw new ApiError(400, 'oldPin and newPin are required');
+    res.json(serializeUser(store.changePin(req.params.upiId, oldPin, newPin)));
+  });
+
+  // Spending insights: totals, per-month breakdown, top payees.
+  app.get('/users/:upiId/insights', (req, res) => {
+    store.requireUser(req.params.upiId, 'user');
+    const ins = store.getInsights(req.params.upiId);
+    res.json({
+      paidRupees: paiseToRupees(ins.paidPaise),
+      receivedRupees: paiseToRupees(ins.receivedPaise),
+      txnCount: ins.txnCount,
+      months: ins.months.map((m) => ({
+        month: m.label,
+        paidRupees: paiseToRupees(m.paidPaise),
+        receivedRupees: paiseToRupees(m.receivedPaise),
+      })),
+      topPayees: ins.topPayees.map((p) => ({
+        upiId: p.upiId,
+        name: p.name,
+        kind: p.kind,
+        category: p.category,
+        totalRupees: paiseToRupees(p.totalPaise),
+        count: p.count,
+      })),
+    });
+  });
+
+  // Scratch cards (rewards) a user has earned.
+  app.get('/users/:upiId/rewards', (req, res) => {
+    store.requireUser(req.params.upiId, 'user');
+    const rewards = store.getRewards(req.params.upiId).map((c) => ({
+      id: c.id,
+      scratched: c.scratched,
+      rewardRupees: c.rewardPaise == null ? null : paiseToRupees(c.rewardPaise),
+      createdAt: c.createdAt,
+    }));
+    res.json({ rewards });
+  });
+
+  // Scratch a card: reveal + credit the reward. Body: { upiId } (the owner).
+  app.post('/rewards/:id/scratch', (req, res) => {
+    const { upiId } = req.body ?? {};
+    if (!upiId) throw new ApiError(400, 'upiId is required');
+    const result = store.scratchCard(req.params.id, upiId);
+    res.json({
+      id: result.id,
+      rewardRupees: paiseToRupees(result.rewardPaise),
+      balanceRupees: paiseToRupees(result.balancePaise),
+    });
   });
 
   // 404 for anything unmatched.

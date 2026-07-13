@@ -318,3 +318,45 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 .rc-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
 .receipt-actions { display: flex; gap: 10px; }
 .receipt-actions .btn { flex: 1; }
+.reward-nudge { display: block; width: 100%; margin: 0 0 18px; padding: 12px 14px; border: 1px dashed var(--violet); border-radius: 12px; background: #f4f2ff; color: var(--violet); font-size: 13px; font-weight: 600; cursor: pointer; }
+
+/* ---------- Profile & settings ---------- */
+.profile-btn { background: #fff; border: 1px solid var(--line); width: 40px; height: 40px; border-radius: 50%; font-size: 18px; line-height: 1; cursor: pointer; }
+.profile-head { display: flex; align-items: center; gap: 14px; }
+.profile-avatar { width: 52px; height: 52px; border-radius: 50%; display: grid; place-items: center; color: #fff; font-weight: 700; font-size: 18px; flex: 0 0 auto; }
+.profile-name { font-weight: 700; font-size: 17px; margin: 0; }
+.profile-phone { color: var(--muted); font-size: 13px; margin: 2px 0 0; }
+.btn.full { width: 100%; margin-top: 4px; }
+.btn.danger { background: #fde8e8; color: var(--red); }
+
+/* ---------- Rewards / scratch cards ---------- */
+.rewards-summary { color: var(--muted); font-size: 14px; margin: 0 2px 14px; }
+.rewards-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 12px; }
+.scratch-card { aspect-ratio: 3 / 2; border: none; border-radius: 16px; cursor: pointer; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; color: #fff; background: linear-gradient(135deg, #7b68ff, #b07bff); box-shadow: 0 4px 14px rgba(109, 94, 252, 0.25); }
+.scratch-card:active { transform: scale(0.98); }
+.scratch-card.done { background: #fff; color: var(--ink); border: 1px solid var(--line); box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05); }
+.sc-gift { font-size: 30px; }
+.sc-reward { font-size: 24px; font-weight: 700; color: var(--green); }
+.sc-label { font-size: 12px; opacity: 0.9; }
+.scratch-card.done .sc-label { color: var(--muted); }
+
+/* ---------- Spending insights ---------- */
+.insight-tiles { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 6px; }
+.insight-tile { background: #fff; border-radius: 14px; padding: 14px 10px; text-align: center; box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05); }
+.it-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 4px; }
+.it-value { font-size: 18px; font-weight: 700; }
+.insight-tile.paid .it-value { color: var(--red); }
+.insight-tile.recv .it-value { color: var(--green); }
+.ins-months { display: flex; flex-direction: column; gap: 10px; margin-bottom: 6px; }
+.ins-month { display: flex; align-items: center; gap: 10px; font-size: 13px; }
+.im-label { width: 66px; flex: 0 0 auto; color: var(--muted); }
+.im-bar { flex: 1; height: 8px; background: #eceafe; border-radius: 6px; overflow: hidden; }
+.im-fill { display: block; height: 100%; background: var(--violet); border-radius: 6px; }
+.im-amt { width: 76px; flex: 0 0 auto; text-align: right; font-weight: 600; }
+.ins-payees { display: flex; flex-direction: column; gap: 10px; }
+.ins-payee { display: flex; align-items: center; gap: 12px; background: #fff; border-radius: 14px; padding: 12px 14px; box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05); }
+.ip-icon { width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto; font-size: 20px; display: grid; place-items: center; background: #eceafe; font-weight: 700; }
+.ip-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.ip-name { font-weight: 600; font-size: 14px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.ip-sub { color: var(--muted); font-size: 12px; }
+.ip-amt { font-weight: 700; font-size: 14px; white-space: nowrap; }

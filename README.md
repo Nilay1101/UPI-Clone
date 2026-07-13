@@ -71,11 +71,19 @@ banks/accounts:
 The home screen is **GPay-style**: a **search bar** (find a person by name or
 UPI ID, a biller by name or category, or just type any UPI ID to pay it), a
 **People** row (tap a contact to pay), quick actions (Scan & Pay, Pay UPI ID,
-Receive, Request, History), and a **Bills & recharges** grid (mobile,
+Receive, Request, Rewards, Insights, History), a **⚙️ Profile** button, and a
+**Bills & recharges** grid (mobile,
 electricity, DTH, water, gas). Each
 category lists **operators** (Airtel/Jio/Vi, …); you enter a consumer number,
 **fetch the bill** (a simulated amount due + due date + period), then pay it —
 a bill payment is just a PIN-authorised transfer to the biller.
+
+Every successful payment earns the payer a **scratch card** (GPay-style):
+open **Rewards** and scratch it to reveal a small cashback that's credited to
+your account. **Spending insights** summarise what you've paid vs received,
+break it down by month, and list your top payees. A **Profile & settings**
+screen shows your linked accounts and lets you **change your UPI PIN** (which
+requires the current PIN and obeys the same lockout rules).
 
 You can also **request money** ("collect"): ask another user to pay you, and
 they approve (authorising with their PIN — which runs a normal transfer, so
@@ -103,9 +111,13 @@ lock auto-expires.
 | POST   | `/accounts/:upiId/verify-request` | Ask the bank to verify linking: `{ token }` → `{ requestId }` |
 | POST   | `/bank/verify/:requestId/approve` | Approve the request (stands in for the bank app) |
 | POST   | `/accounts/:upiId/claim`      | Activate: `{ pin, token }` (OTP token **and** bank approval required) |
+| POST   | `/users/:upiId/change-pin`    | Change the UPI PIN: `{ oldPin, newPin }` (current PIN required) |
 | GET    | `/users/:upiId`               | Fetch an account + balance                   |
 | GET    | `/users/:upiId/qr`            | Payment QR; optional `?amount=&note=`        |
 | GET    | `/users/:upiId/transactions`  | Transaction history                          |
+| GET    | `/users/:upiId/insights`      | Spending insights: totals, by month, top payees |
+| GET    | `/users/:upiId/rewards`       | Scratch cards earned (reward hidden until scratched) |
+| POST   | `/rewards/:id/scratch`        | Scratch a card: reveal + credit the reward: `{ upiId }` |
 | POST   | `/pay`                        | Pay via `{ from, to, amount, pin }` **or** `{ from, upiUri, pin }` (scanned QR) |
 | POST   | `/requests`                   | Request money: `{ from (requester), to (payer), amount, note? }` |
 | GET    | `/users/:upiId/requests`      | A user's requests: `{ incoming, outgoing }` |

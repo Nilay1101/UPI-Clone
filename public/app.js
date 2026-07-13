@@ -47,6 +47,9 @@ function show(screenId) {
   if (screenId === 'screen-history') loadHistory();
   if (screenId === 'screen-request') loadRequests();
   if (screenId === 'screen-pay') populatePayFrom();
+  if (screenId === 'screen-profile') renderProfile();
+  if (screenId === 'screen-rewards') renderRewards();
+  if (screenId === 'screen-insights') renderInsights();
   if (screenId !== 'screen-home') $('#account-switcher').hidden = true;
 }
 
@@ -133,8 +136,11 @@ function showReceipt(result, statusText = 'Paid successfully') {
   else noteRow.hidden = true;
   $('#rc-id').textContent = t.id;
   $('#rc-date').textContent = new Date(t.createdAt).toLocaleString('en-IN');
+  $('#rc-reward').hidden = !result.cardEarned; // "you earned a scratch card"
   show('screen-success');
 }
+
+$('#rc-reward').addEventListener('click', () => show('screen-rewards'));
 
 function receiptText(r) {
   const t = r.transaction;
@@ -642,6 +648,148 @@ $('#switcher-list').addEventListener('click', async (e) => {
     toast(err.message, 'err');
   }
 });
+
+/* ---------------- Profile & settings ---------------- */
+async function renderProfile() {
+  const u = state.user;
+  if (!u) return;
+  $('#profile-avatar').textContent = initials(u.name);
+  $('#profile-avatar').style.background = colorFor(u.name);
+  $('#profile-name').textContent = u.name;
+  $('#profile-phone').textContent = u.phone;
+  $('#profile-bank').textContent = `${u.bankName} · ${u.accountMasked}`;
+  $('#profile-upiid').textContent = u.upiId;
+  $('#profile-balance').textContent = `₹${rupees(u.balanceRupees)}`;
+
+  const list = $('#profile-accounts');
+  list.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const accounts = await myAccounts();
+    list.innerHTML = '';
+    for (const a of accounts) {
+      const active = a.upiId === state.user.upiId;
+      const tag = active ? '<span class="acct-tag">Active</span>'
+        : a.claimed ? '<span class="acct-tag">Linked</span>'
+          : '<span class="acct-sub">Not linked</span>';
+      const el = document.createElement('div');
+      el.className = 'acct' + (active ? ' active' : '');
+      el.innerHTML = `
+        <div class="acct-top">
+          <span class="acct-bank">${escapeHtml(a.bankName)}</span>
+          <span class="acct-bal">₹${rupees(a.balanceRupees)}</span>
+        </div>
+        <p class="acct-sub">${escapeHtml(a.accountMasked)} · ${escapeHtml(a.upiId)}</p>
+        ${tag}`;
+      list.appendChild(el);
+    }
+  } catch (err) { list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
+}
+
+$('#form-change-pin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const oldPin = f.get('oldPin'), newPin = f.get('newPin'), confirmPin = f.get('confirmPin');
+  if (newPin !== confirmPin) return toast('New PINs do not match', 'err');
+  if (newPin === oldPin) return toast('New PIN must be different from the current one', 'err');
+  try {
+    await api(`/users/${encodeURIComponent(state.user.upiId)}/change-pin`, {
+      method: 'POST', body: JSON.stringify({ oldPin, newPin }),
+    });
+    e.target.reset();
+    toast('UPI PIN updated', 'ok');
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+/* ---------------- Rewards (scratch cards) ---------------- */
+async function renderRewards() {
+  const grid = $('#rewards-grid');
+  const summary = $('#rewards-summary');
+  grid.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const { rewards } = await api(`/users/${encodeURIComponent(state.user.upiId)}/rewards`);
+    const scratched = rewards.filter((r) => r.scratched);
+    const earned = scratched.reduce((s, r) => s + Number(r.rewardRupees || 0), 0);
+    const toScratch = rewards.length - scratched.length;
+    summary.textContent = rewards.length
+      ? `₹${rupees(earned)} earned · ${toScratch} card${toScratch === 1 ? '' : 's'} to scratch`
+      : 'No cards yet — make a payment to earn one.';
+    grid.innerHTML = '';
+    for (const r of rewards) {
+      const card = document.createElement('button');
+      card.className = 'scratch-card' + (r.scratched ? ' done' : '');
+      if (r.scratched) {
+        card.disabled = true;
+        card.innerHTML = `<span class="sc-reward">₹${rupees(r.rewardRupees)}</span><span class="sc-label">Cashback</span>`;
+      } else {
+        card.dataset.card = r.id;
+        card.innerHTML = `<span class="sc-gift">🎁</span><span class="sc-label">Scratch to reveal</span>`;
+      }
+      grid.appendChild(card);
+    }
+  } catch (err) {
+    grid.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+    summary.textContent = '';
+  }
+}
+
+$('#rewards-grid').addEventListener('click', async (e) => {
+  const card = e.target.closest('[data-card]');
+  if (!card) return;
+  card.disabled = true;
+  try {
+    const res = await api(`/rewards/${card.dataset.card}/scratch`, {
+      method: 'POST', body: JSON.stringify({ upiId: state.user.upiId }),
+    });
+    state.user.balanceRupees = res.balanceRupees; // reward credited to balance
+    renderHome();
+    toast(`You won ₹${rupees(res.rewardRupees)} cashback!`, 'ok');
+    renderRewards();
+  } catch (err) { toast(err.message, 'err'); card.disabled = false; }
+});
+
+/* ---------------- Spending insights ---------------- */
+async function renderInsights() {
+  try {
+    const ins = await api(`/users/${encodeURIComponent(state.user.upiId)}/insights`);
+    $('#ins-paid').textContent = rupees(ins.paidRupees);
+    $('#ins-received').textContent = rupees(ins.receivedRupees);
+    $('#ins-count').textContent = ins.txnCount;
+
+    const months = $('#ins-months');
+    months.innerHTML = ins.months.length ? '' : '<p class="empty">No activity yet.</p>';
+    const maxPaid = Math.max(1, ...ins.months.map((m) => m.paidRupees));
+    for (const m of ins.months) {
+      const pct = Math.round((m.paidRupees / maxPaid) * 100);
+      const row = document.createElement('div');
+      row.className = 'ins-month';
+      row.innerHTML = `
+        <span class="im-label">${escapeHtml(m.month)}</span>
+        <span class="im-bar"><span class="im-fill" style="width:${pct}%"></span></span>
+        <span class="im-amt">₹${rupees(m.paidRupees)}</span>`;
+      months.appendChild(row);
+    }
+
+    const payees = $('#ins-payees');
+    payees.innerHTML = ins.topPayees.length ? '' : '<p class="empty">No payments yet.</p>';
+    for (const p of ins.topPayees) {
+      const isBiller = p.kind === 'biller';
+      const icon = isBiller ? (BILL_ICONS[p.category] || '🧾') : initials(p.name);
+      const bg = isBiller ? '' : ` style="background:${colorFor(p.name)};color:#fff"`;
+      const row = document.createElement('div');
+      row.className = 'ins-payee';
+      row.innerHTML = `
+        <span class="ip-icon"${bg}>${escapeHtml(icon)}</span>
+        <span class="ip-text">
+          <span class="ip-name">${escapeHtml(p.name)}</span>
+          <span class="ip-sub">${p.count} payment${p.count === 1 ? '' : 's'}</span>
+        </span>
+        <span class="ip-amt">₹${rupees(p.totalRupees)}</span>`;
+      payees.appendChild(row);
+    }
+  } catch (err) {
+    $('#ins-months').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
+}
 
 // Fill the "Pay from" dropdown with your activated accounts (default = active).
 async function populatePayFrom() {

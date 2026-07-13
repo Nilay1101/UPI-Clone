@@ -117,7 +117,7 @@
           <p class="greeting">Hi, <span id="home-name">—</span></p>
           <p class="upi-id" id="home-upiid">—</p>
         </div>
-        <button class="link-btn" id="btn-logout">Sign out</button>
+        <button class="profile-btn" data-go="screen-profile" aria-label="Profile &amp; settings">⚙️</button>
       </header>
 
       <button class="search-bar" id="btn-search" type="button">
@@ -157,6 +157,12 @@
         <button class="quick-btn" data-go="screen-request">
           <span class="quick-icon">🙋</span><span>Request</span>
           <span id="req-badge" class="badge" hidden>0</span>
+        </button>
+        <button class="quick-btn" data-go="screen-rewards">
+          <span class="quick-icon">🎁</span><span>Rewards</span>
+        </button>
+        <button class="quick-btn" data-go="screen-insights">
+          <span class="quick-icon">📊</span><span>Insights</span>
         </button>
         <button class="quick-btn" data-go="screen-history">
           <span class="quick-icon">🧾</span><span>History</span>
@@ -349,6 +355,8 @@
         <p class="receipt-amount">₹<span id="rc-amount">0.00</span></p>
         <p class="receipt-status" id="rc-status">Paid successfully</p>
 
+        <button class="reward-nudge" id="rc-reward" hidden>🎁 You earned a scratch card — tap to open</button>
+
         <div class="receipt-card">
           <div class="rc-row"><span class="rc-key">To</span><span id="rc-to">—</span></div>
           <div class="rc-row"><span class="rc-key">From</span><span id="rc-from">—</span></div>
@@ -362,6 +370,86 @@
           <button class="btn primary" id="btn-receipt-done">Done</button>
         </div>
       </div>
+    </section>
+
+    <!-- ============ PROFILE & SETTINGS ============ -->
+    <section id="screen-profile" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Profile &amp; settings</h2>
+      </header>
+
+      <div class="card profile-head">
+        <div class="profile-avatar" id="profile-avatar">—</div>
+        <div>
+          <p class="profile-name" id="profile-name">—</p>
+          <p class="profile-phone" id="profile-phone">—</p>
+        </div>
+      </div>
+
+      <h3 class="section-title">Active account</h3>
+      <div class="card">
+        <div class="rc-row"><span class="rc-key">Bank</span><span id="profile-bank">—</span></div>
+        <div class="rc-row"><span class="rc-key">UPI ID</span><span id="profile-upiid">—</span></div>
+        <div class="rc-row"><span class="rc-key">Balance</span><span id="profile-balance">—</span></div>
+      </div>
+
+      <h3 class="section-title">Change UPI PIN</h3>
+      <div class="card">
+        <form id="form-change-pin">
+          <label>Current PIN
+            <input name="oldPin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <label>New PIN (4–6 digits)
+            <input name="newPin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <label>Confirm new PIN
+            <input name="confirmPin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Update PIN</button>
+        </form>
+      </div>
+
+      <h3 class="section-title">Linked accounts</h3>
+      <div id="profile-accounts" class="accounts"></div>
+
+      <button class="btn danger full" id="btn-logout">Sign out</button>
+    </section>
+
+    <!-- ============ REWARDS (SCRATCH CARDS) ============ -->
+    <section id="screen-rewards" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Rewards</h2>
+      </header>
+      <p class="rewards-summary" id="rewards-summary">—</p>
+      <div id="rewards-grid" class="rewards-grid"></div>
+    </section>
+
+    <!-- ============ SPENDING INSIGHTS ============ -->
+    <section id="screen-insights" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Spending insights</h2>
+      </header>
+      <div class="insight-tiles">
+        <div class="insight-tile paid">
+          <span class="it-label">Paid</span><span class="it-value">₹<span id="ins-paid">0.00</span></span>
+        </div>
+        <div class="insight-tile recv">
+          <span class="it-label">Received</span><span class="it-value">₹<span id="ins-received">0.00</span></span>
+        </div>
+        <div class="insight-tile">
+          <span class="it-label">Payments</span><span class="it-value" id="ins-count">0</span>
+        </div>
+      </div>
+      <h3 class="section-title">By month</h3>
+      <div id="ins-months" class="ins-months"></div>
+      <h3 class="section-title">Top payees</h3>
+      <div id="ins-payees" class="ins-payees"></div>
     </section>
   </div>
 

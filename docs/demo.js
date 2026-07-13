@@ -60,6 +60,7 @@ function seedDb() {
     },
     transactions: [],
     requests: [],
+    cards: [],
     otps: {},
     sessions: {},
   };
@@ -144,6 +145,7 @@ function assertValidPin(pin) {
 function ensure(d) {
   if (!d.requests) d.requests = [];
   if (!d.transactions) d.transactions = [];
+  if (!d.cards) d.cards = [];
   if (!d.otps) d.otps = {};
   if (!d.sessions) d.sessions = {};
 }
@@ -182,6 +184,15 @@ function doTransfer(d, fromId, toId, amountPaise, note, pin) {
     status: 'SUCCESS', createdAt: new Date().toISOString(),
   };
   d.transactions.unshift(txn);
+  // GPay-style: the payer earns a scratch card with a hidden cashback reward.
+  if (!d.cards) d.cards = [];
+  const card = {
+    id: uuid(), upiId: fromId, txnId: txn.id,
+    rewardPaise: (Math.floor(Math.random() * 100) + 1) * 100, // ₹1–₹100
+    scratched: false, createdAt: txn.createdAt,
+  };
+  d.cards.push(card);
+  txn.cardId = card.id;
   saveDb(d);
   return txn;
 }
@@ -394,7 +405,7 @@ async function api(path, options = {}) {
     const amountPaise = rupeesToPaise(amount);
     if (Number.isNaN(amountPaise)) throw new Error('amount must be a number');
     const txn = doTransfer(d, from, to, amountPaise, note, pin);
-    return { transaction: serializeTxn(txn), payer: serializeUser(d.accounts[from]), payee: serializeUser(d.accounts[to]) };
+    return { transaction: serializeTxn(txn), payer: serializeUser(d.accounts[from]), payee: serializeUser(d.accounts[to]), cardEarned: !!txn.cardId };
   }
 
   if (rawPath === '/requests' && method === 'POST') {
@@ -429,6 +440,7 @@ async function api(path, options = {}) {
       return {
         request: serializeRequest(req), transaction: serializeTxn(txn),
         payer: serializeUser(d.accounts[req.to]), payee: serializeUser(d.accounts[req.from]),
+        cardEarned: !!txn.cardId,
       };
     }
     if (parts[2] === 'decline') {
@@ -436,6 +448,80 @@ async function api(path, options = {}) {
       saveDb(d);
       return serializeRequest(req);
     }
+  }
+
+  // Change the UPI PIN (requires the current PIN).
+  if (parts[0] === 'users' && parts.length === 3 && parts[2] === 'change-pin' && method === 'POST') {
+    const upiId = decodeURIComponent(parts[1]);
+    const acct = requireUser(d, upiId, 'account');
+    if (!acct.claimed) throw new Error('this account is not activated; set a UPI PIN first');
+    const { oldPin, newPin } = body;
+    if (!oldPin || !newPin) throw new Error('oldPin and newPin are required');
+    try { authorizePin(acct, oldPin); } catch (e) { saveDb(d); throw e; }
+    if (!/^\d{4,6}$/.test(String(newPin))) throw new Error('PIN must be 4-6 digits');
+    acct.pin = String(newPin); acct.failedPinAttempts = 0; acct.lockedUntil = null;
+    saveDb(d);
+    return serializeUser(acct);
+  }
+
+  // Spending insights: totals, per-month breakdown, top payees.
+  if (parts[0] === 'users' && parts.length === 3 && parts[2] === 'insights' && method === 'GET') {
+    const upiId = decodeURIComponent(parts[1]);
+    requireUser(d, upiId, 'user');
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const txns = d.transactions.filter((t) => t.from === upiId || t.to === upiId);
+    let paidPaise = 0, receivedPaise = 0;
+    const months = new Map(), payees = new Map();
+    for (const t of txns) {
+      const paid = t.from === upiId;
+      const dt = new Date(t.createdAt);
+      const key = `${dt.getFullYear()}-${String(dt.getMonth() + 1).padStart(2, '0')}`;
+      if (!months.has(key)) months.set(key, { key, label: `${MONTHS[dt.getMonth()]} ${dt.getFullYear()}`, paidPaise: 0, receivedPaise: 0 });
+      const m = months.get(key);
+      if (paid) {
+        paidPaise += t.amountPaise; m.paidPaise += t.amountPaise;
+        const p = payees.get(t.to) || { upiId: t.to, totalPaise: 0, count: 0 };
+        p.totalPaise += t.amountPaise; p.count += 1; payees.set(t.to, p);
+      } else {
+        receivedPaise += t.amountPaise; m.receivedPaise += t.amountPaise;
+      }
+    }
+    const topPayees = [...payees.values()].sort((a, b) => b.totalPaise - a.totalPaise).slice(0, 5).map((p) => {
+      const u = d.accounts[p.upiId];
+      return { upiId: p.upiId, name: u ? u.holderName : p.upiId, kind: u ? u.kind : 'personal', category: u ? u.category : null, totalRupees: paiseToRupees(p.totalPaise), count: p.count };
+    });
+    return {
+      paidRupees: paiseToRupees(paidPaise), receivedRupees: paiseToRupees(receivedPaise), txnCount: txns.length,
+      months: [...months.values()].sort((a, b) => b.key.localeCompare(a.key)).map((m) => ({ month: m.label, paidRupees: paiseToRupees(m.paidPaise), receivedRupees: paiseToRupees(m.receivedPaise) })),
+      topPayees,
+    };
+  }
+
+  // Scratch cards (rewards) a user has earned.
+  if (parts[0] === 'users' && parts.length === 3 && parts[2] === 'rewards' && method === 'GET') {
+    const upiId = decodeURIComponent(parts[1]);
+    requireUser(d, upiId, 'user');
+    const rewards = d.cards.filter((c) => c.upiId === upiId).slice().reverse().map((c) => ({
+      id: c.id, scratched: c.scratched,
+      rewardRupees: c.scratched ? paiseToRupees(c.rewardPaise) : null,
+      createdAt: c.createdAt,
+    }));
+    return { rewards };
+  }
+
+  // Scratch a card: reveal + credit the reward.
+  if (parts[0] === 'rewards' && parts.length === 3 && parts[2] === 'scratch' && method === 'POST') {
+    const cardId = decodeURIComponent(parts[1]);
+    const { upiId } = body;
+    if (!upiId) throw new Error('upiId is required');
+    const card = d.cards.find((c) => c.id === cardId);
+    if (!card) throw new Error('scratch card not found');
+    if (card.upiId !== upiId) throw new Error('this card belongs to another account');
+    if (card.scratched) throw new Error('this card has already been scratched');
+    card.scratched = true;
+    d.accounts[upiId].balancePaise += card.rewardPaise;
+    saveDb(d);
+    return { id: cardId, rewardRupees: paiseToRupees(card.rewardPaise), balanceRupees: paiseToRupees(d.accounts[upiId].balancePaise) };
   }
 
   throw new Error('not found');
@@ -464,6 +550,9 @@ function show(screenId) {
   if (screenId === 'screen-history') loadHistory();
   if (screenId === 'screen-request') loadRequests();
   if (screenId === 'screen-pay') populatePayFrom();
+  if (screenId === 'screen-profile') renderProfile();
+  if (screenId === 'screen-rewards') renderRewards();
+  if (screenId === 'screen-insights') renderInsights();
   if (screenId !== 'screen-home') $('#account-switcher').hidden = true;
 }
 
@@ -545,8 +634,11 @@ function showReceipt(result, statusText = 'Paid successfully') {
   else noteRow.hidden = true;
   $('#rc-id').textContent = t.id;
   $('#rc-date').textContent = new Date(t.createdAt).toLocaleString('en-IN');
+  $('#rc-reward').hidden = !result.cardEarned;
   show('screen-success');
 }
+
+$('#rc-reward').addEventListener('click', () => show('screen-rewards'));
 
 function receiptText(r) {
   const t = r.transaction;
@@ -954,6 +1046,148 @@ $('#btn-refresh').addEventListener('click', () =>
 async function myAccounts() {
   const { accounts } = await api(`/accounts?phone=${encodeURIComponent(state.user.phone)}`);
   return accounts;
+}
+
+/* ---- Profile & settings ---- */
+async function renderProfile() {
+  const u = state.user;
+  if (!u) return;
+  $('#profile-avatar').textContent = initials(u.name);
+  $('#profile-avatar').style.background = colorFor(u.name);
+  $('#profile-name').textContent = u.name;
+  $('#profile-phone').textContent = u.phone;
+  $('#profile-bank').textContent = `${u.bankName} · ${u.accountMasked}`;
+  $('#profile-upiid').textContent = u.upiId;
+  $('#profile-balance').textContent = `₹${rupees(u.balanceRupees)}`;
+
+  const list = $('#profile-accounts');
+  list.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const accounts = await myAccounts();
+    list.innerHTML = '';
+    for (const a of accounts) {
+      const active = a.upiId === state.user.upiId;
+      const tag = active ? '<span class="acct-tag">Active</span>'
+        : a.claimed ? '<span class="acct-tag">Linked</span>'
+          : '<span class="acct-sub">Not linked</span>';
+      const el = document.createElement('div');
+      el.className = 'acct' + (active ? ' active' : '');
+      el.innerHTML = `
+        <div class="acct-top">
+          <span class="acct-bank">${escapeHtml(a.bankName)}</span>
+          <span class="acct-bal">₹${rupees(a.balanceRupees)}</span>
+        </div>
+        <p class="acct-sub">${escapeHtml(a.accountMasked)} · ${escapeHtml(a.upiId)}</p>
+        ${tag}`;
+      list.appendChild(el);
+    }
+  } catch (err) { list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
+}
+
+$('#form-change-pin').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const oldPin = f.get('oldPin'), newPin = f.get('newPin'), confirmPin = f.get('confirmPin');
+  if (newPin !== confirmPin) return toast('New PINs do not match', 'err');
+  if (newPin === oldPin) return toast('New PIN must be different from the current one', 'err');
+  try {
+    await api(`/users/${encodeURIComponent(state.user.upiId)}/change-pin`, {
+      method: 'POST', body: JSON.stringify({ oldPin, newPin }),
+    });
+    e.target.reset();
+    toast('UPI PIN updated', 'ok');
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+/* ---- Rewards (scratch cards) ---- */
+async function renderRewards() {
+  const grid = $('#rewards-grid');
+  const summary = $('#rewards-summary');
+  grid.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const { rewards } = await api(`/users/${encodeURIComponent(state.user.upiId)}/rewards`);
+    const scratched = rewards.filter((r) => r.scratched);
+    const earned = scratched.reduce((s, r) => s + Number(r.rewardRupees || 0), 0);
+    const toScratch = rewards.length - scratched.length;
+    summary.textContent = rewards.length
+      ? `₹${rupees(earned)} earned · ${toScratch} card${toScratch === 1 ? '' : 's'} to scratch`
+      : 'No cards yet — make a payment to earn one.';
+    grid.innerHTML = '';
+    for (const r of rewards) {
+      const card = document.createElement('button');
+      card.className = 'scratch-card' + (r.scratched ? ' done' : '');
+      if (r.scratched) {
+        card.disabled = true;
+        card.innerHTML = `<span class="sc-reward">₹${rupees(r.rewardRupees)}</span><span class="sc-label">Cashback</span>`;
+      } else {
+        card.dataset.card = r.id;
+        card.innerHTML = `<span class="sc-gift">🎁</span><span class="sc-label">Scratch to reveal</span>`;
+      }
+      grid.appendChild(card);
+    }
+  } catch (err) {
+    grid.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+    summary.textContent = '';
+  }
+}
+
+$('#rewards-grid').addEventListener('click', async (e) => {
+  const card = e.target.closest('[data-card]');
+  if (!card) return;
+  card.disabled = true;
+  try {
+    const res = await api(`/rewards/${card.dataset.card}/scratch`, {
+      method: 'POST', body: JSON.stringify({ upiId: state.user.upiId }),
+    });
+    state.user.balanceRupees = res.balanceRupees;
+    renderHome();
+    toast(`You won ₹${rupees(res.rewardRupees)} cashback!`, 'ok');
+    renderRewards();
+  } catch (err) { toast(err.message, 'err'); card.disabled = false; }
+});
+
+/* ---- Spending insights ---- */
+async function renderInsights() {
+  try {
+    const ins = await api(`/users/${encodeURIComponent(state.user.upiId)}/insights`);
+    $('#ins-paid').textContent = rupees(ins.paidRupees);
+    $('#ins-received').textContent = rupees(ins.receivedRupees);
+    $('#ins-count').textContent = ins.txnCount;
+
+    const months = $('#ins-months');
+    months.innerHTML = ins.months.length ? '' : '<p class="empty">No activity yet.</p>';
+    const maxPaid = Math.max(1, ...ins.months.map((m) => m.paidRupees));
+    for (const m of ins.months) {
+      const pct = Math.round((m.paidRupees / maxPaid) * 100);
+      const row = document.createElement('div');
+      row.className = 'ins-month';
+      row.innerHTML = `
+        <span class="im-label">${escapeHtml(m.month)}</span>
+        <span class="im-bar"><span class="im-fill" style="width:${pct}%"></span></span>
+        <span class="im-amt">₹${rupees(m.paidRupees)}</span>`;
+      months.appendChild(row);
+    }
+
+    const payees = $('#ins-payees');
+    payees.innerHTML = ins.topPayees.length ? '' : '<p class="empty">No payments yet.</p>';
+    for (const p of ins.topPayees) {
+      const isBiller = p.kind === 'biller';
+      const icon = isBiller ? (BILL_ICONS[p.category] || '🧾') : initials(p.name);
+      const bg = isBiller ? '' : ` style="background:${colorFor(p.name)};color:#fff"`;
+      const row = document.createElement('div');
+      row.className = 'ins-payee';
+      row.innerHTML = `
+        <span class="ip-icon"${bg}>${escapeHtml(icon)}</span>
+        <span class="ip-text">
+          <span class="ip-name">${escapeHtml(p.name)}</span>
+          <span class="ip-sub">${p.count} payment${p.count === 1 ? '' : 's'}</span>
+        </span>
+        <span class="ip-amt">₹${rupees(p.totalRupees)}</span>`;
+      payees.appendChild(row);
+    }
+  } catch (err) {
+    $('#ins-months').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
+  }
 }
 
 $('#btn-switch-account').addEventListener('click', () => {

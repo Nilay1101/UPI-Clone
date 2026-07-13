@@ -121,6 +121,16 @@ export function createStore({
     );
     CREATE INDEX IF NOT EXISTS idx_req_from ON payment_requests(from_upi);
     CREATE INDEX IF NOT EXISTS idx_req_to   ON payment_requests(to_upi);
+
+    CREATE TABLE IF NOT EXISTS scratch_cards (
+      id           TEXT PRIMARY KEY,
+      upi_id       TEXT NOT NULL REFERENCES accounts(upi_id),
+      txn_id       TEXT,
+      reward_paise INTEGER NOT NULL,
+      scratched    INTEGER NOT NULL DEFAULT 0,
+      created_at   TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_card_upi ON scratch_cards(upi_id);
   `);
 
   // Seed the dummy banks + accounts once (only into an empty DB).
@@ -239,6 +249,16 @@ export function createStore({
     resolveRequest: db.prepare(
       'UPDATE payment_requests SET status = ?, txn_id = ?, resolved_at = ? WHERE id = ?',
     ),
+    setPin: db.prepare(
+      'UPDATE accounts SET pin_hash = ?, failed_pin_attempts = 0, locked_until = NULL WHERE upi_id = ?',
+    ),
+    insertCard: db.prepare(
+      `INSERT INTO scratch_cards (id, upi_id, txn_id, reward_paise, scratched, created_at)
+       VALUES (?, ?, ?, ?, 0, ?)`,
+    ),
+    cardsForUser: db.prepare('SELECT * FROM scratch_cards WHERE upi_id = ? ORDER BY rowid DESC'),
+    getCard: db.prepare('SELECT * FROM scratch_cards WHERE id = ?'),
+    scratchCardStmt: db.prepare('UPDATE scratch_cards SET scratched = 1 WHERE id = ?'),
   };
 
   function inTransaction(fn) {
@@ -531,12 +551,119 @@ export function createStore({
         createdAt: new Date().toISOString(),
       };
       stmts.insertTxn.run(txn.id, txn.from, txn.to, txn.amountPaise, txn.note, txn.status, txn.createdAt);
+
+      // GPay-style: the payer earns a scratch card with a hidden cashback reward.
+      const card = {
+        id: randomUUID(),
+        rewardPaise: randomInt(1, 101) * 100, // ₹1–₹100 cashback, revealed on scratch
+      };
+      stmts.insertCard.run(card.id, fromUpiId, txn.id, card.rewardPaise, txn.createdAt);
+      txn.cardId = card.id; // in-memory only (not persisted on the txn row)
       return txn;
     });
   }
 
+  /* ---------------- Scratch cards (rewards) ---------------- */
+
+  const toCard = (row) =>
+    row && {
+      id: row.id,
+      txnId: row.txn_id,
+      scratched: !!row.scratched,
+      // The reward stays hidden until the card is scratched.
+      rewardPaise: row.scratched ? row.reward_paise : null,
+      createdAt: row.created_at,
+    };
+
+  function getRewards(upiId) {
+    return stmts.cardsForUser.all(upiId).map(toCard);
+  }
+
+  /** Scratch a card: reveal its reward and credit it to the owner's account. */
+  function scratchCard(cardId, upiId) {
+    return inTransaction(() => {
+      const row = stmts.getCard.get(cardId);
+      if (!row) throw new ApiError(404, 'scratch card not found');
+      if (row.upi_id !== upiId) throw new ApiError(403, 'this card belongs to another account');
+      if (row.scratched) throw new ApiError(409, 'this card has already been scratched');
+      stmts.scratchCardStmt.run(cardId);
+      stmts.credit.run(row.reward_paise, upiId);
+      return { id: cardId, rewardPaise: row.reward_paise, balancePaise: getUser(upiId).balancePaise };
+    });
+  }
+
+  /* ---------------- Change UPI PIN ---------------- */
+
+  function changePin(upiId, oldPin, newPin) {
+    const account = requireUser(upiId, 'account');
+    if (!account.claimed) {
+      throw new ApiError(403, 'this account is not activated; set a UPI PIN first');
+    }
+    authorizePin(upiId, oldPin); // verifies the current PIN + applies lockout rules
+    const newHash = hashPin(newPin); // validates the new PIN is 4-6 digits
+    stmts.setPin.run(newHash, upiId);
+    return getUser(upiId);
+  }
+
   function getTransactions(upiId) {
     return stmts.txnsForUser.all(upiId, upiId).map(toTxn);
+  }
+
+  /**
+   * Spending insights for an account: totals paid vs received, a per-month
+   * breakdown, and the top payees (by total paid). Computed from history.
+   */
+  function getInsights(upiId) {
+    const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const txns = getTransactions(upiId);
+    let paidPaise = 0;
+    let receivedPaise = 0;
+    const months = new Map(); // 'YYYY-MM' -> { key, label, paidPaise, receivedPaise }
+    const payees = new Map(); // toUpiId -> { upiId, totalPaise, count }
+
+    for (const t of txns) {
+      const paid = t.from === upiId;
+      const d = new Date(t.createdAt);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (!months.has(key)) {
+        months.set(key, { key, label: `${MONTHS[d.getMonth()]} ${d.getFullYear()}`, paidPaise: 0, receivedPaise: 0 });
+      }
+      const m = months.get(key);
+      if (paid) {
+        paidPaise += t.amountPaise;
+        m.paidPaise += t.amountPaise;
+        const p = payees.get(t.to) || { upiId: t.to, totalPaise: 0, count: 0 };
+        p.totalPaise += t.amountPaise;
+        p.count += 1;
+        payees.set(t.to, p);
+      } else {
+        receivedPaise += t.amountPaise;
+        m.receivedPaise += t.amountPaise;
+      }
+    }
+
+    const topPayees = [...payees.values()]
+      .sort((a, b) => b.totalPaise - a.totalPaise)
+      .slice(0, 5)
+      .map((p) => {
+        const u = getUser(p.upiId);
+        return {
+          upiId: p.upiId,
+          name: u ? u.holderName : p.upiId,
+          kind: u ? u.kind : 'personal',
+          category: u ? u.category : null,
+          totalPaise: p.totalPaise,
+          count: p.count,
+        };
+      });
+
+    return {
+      paidPaise,
+      receivedPaise,
+      txnCount: txns.length,
+      months: [...months.values()].sort((a, b) => b.key.localeCompare(a.key)),
+      topPayees,
+    };
   }
 
   /* ---------------- Money requests ("collect") ---------------- */
@@ -598,7 +725,9 @@ export function createStore({
     sendOtp, verifyOtp, sessionPhone,
     requestBankVerification, approveBankVerification, isBankApproved,
     getBanks, getBank, getAccountsByPhone, getContacts, getBillers, fetchBill, search, getUser, requireUser, claimAccount, addAccount,
-    transfer, getTransactions,
+    changePin,
+    transfer, getTransactions, getInsights,
+    getRewards, scratchCard,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,
   };

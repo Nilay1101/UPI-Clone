@@ -236,6 +236,88 @@ test('paying a bill is a normal PIN-authorised transfer to the biller', async ()
   assert.equal(pay.body.payee.name, 'Airtel');
 });
 
+test('a successful payment earns the payer a scratch card', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  const pay = await request(app)
+    .post('/pay')
+    .send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 100, pin: PIN })
+    .expect(201);
+  assert.equal(pay.body.cardEarned, true);
+
+  const { rewards } = (await request(app).get('/users/ravi@hdfc/rewards').expect(200)).body;
+  assert.equal(rewards.length, 1);
+  assert.equal(rewards[0].scratched, false);
+  assert.equal(rewards[0].rewardRupees, null); // hidden until scratched
+});
+
+test('scratching a card reveals the reward and credits the balance', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc'); // 5000
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 100, pin: PIN }).expect(201);
+  const before = await balance(app, 'ravi@hdfc'); // 4900
+  const { rewards } = (await request(app).get('/users/ravi@hdfc/rewards').expect(200)).body;
+
+  const scratch = await request(app)
+    .post(`/rewards/${rewards[0].id}/scratch`)
+    .send({ upiId: 'ravi@hdfc' })
+    .expect(200);
+  assert.ok(scratch.body.rewardRupees >= 1 && scratch.body.rewardRupees <= 100);
+  assert.equal(scratch.body.balanceRupees, before + scratch.body.rewardRupees);
+
+  // Re-scratching is rejected, and the reward is now visible in the list.
+  await request(app).post(`/rewards/${rewards[0].id}/scratch`).send({ upiId: 'ravi@hdfc' }).expect(409);
+  const after = (await request(app).get('/users/ravi@hdfc/rewards').expect(200)).body.rewards[0];
+  assert.equal(after.scratched, true);
+  assert.equal(after.rewardRupees, scratch.body.rewardRupees);
+});
+
+test("a card can't be scratched by another account", async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 100, pin: PIN }).expect(201);
+  const { rewards } = (await request(app).get('/users/ravi@hdfc/rewards').expect(200)).body;
+  await request(app).post(`/rewards/${rewards[0].id}/scratch`).send({ upiId: 'priya@hdfc' }).expect(403);
+});
+
+test('change-pin requires the current PIN and then authorises with the new one', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc', '1234');
+  // Wrong current PIN is rejected.
+  await request(app).post('/users/ravi@hdfc/change-pin').send({ oldPin: '9999', newPin: '4321' }).expect(401);
+  // Correct current PIN succeeds.
+  await request(app).post('/users/ravi@hdfc/change-pin').send({ oldPin: '1234', newPin: '4321' }).expect(200);
+  // The old PIN no longer works; the new one does.
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 100, pin: '1234' }).expect(401);
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 100, pin: '4321' }).expect(201);
+});
+
+test('change-pin rejects an invalid new PIN and an unactivated account', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc', '1234');
+  await request(app).post('/users/ravi@hdfc/change-pin').send({ oldPin: '1234', newPin: '12' }).expect(400);
+  // ravi@sbi is unclaimed (no PIN set).
+  await request(app).post('/users/ravi@sbi/change-pin').send({ oldPin: '1234', newPin: '4321' }).expect(403);
+});
+
+test('insights summarise paid vs received, by month and top payees', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc'); // 5000
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 300, pin: PIN }).expect(201);
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'airtel@bill', amount: 200, pin: PIN }).expect(201);
+  await request(app).post('/pay').send({ from: 'ravi@hdfc', to: 'priya@hdfc', amount: 100, pin: PIN }).expect(201);
+
+  const ins = (await request(app).get('/users/ravi@hdfc/insights').expect(200)).body;
+  assert.equal(ins.paidRupees, 600);
+  assert.equal(ins.receivedRupees, 0);
+  assert.equal(ins.txnCount, 3);
+  assert.ok(ins.months.length >= 1);
+  const priya = ins.topPayees.find((p) => p.upiId === 'priya@hdfc');
+  assert.equal(priya.totalRupees, 400); // 300 + 100
+  assert.equal(priya.count, 2);
+  assert.equal(priya.name, 'Priya Shah');
+});
+
 test('QR endpoint returns a upi:// link and PNG for an account', async () => {
   const app = makeApp();
   const res = await request(app).get('/users/priya@hdfc/qr').query({ amount: 250, note: 'Lunch' }).expect(200);
