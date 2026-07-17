@@ -69,6 +69,37 @@ export function createApp(store) {
     resolvedAt: r.resolvedAt,
   });
 
+  // Serialize a split from the perspective of `viewer` (adds you-owe / you're-owed).
+  const serializeSplit = (s, viewer) => {
+    const members = s.members.map((m) => ({
+      upiId: m.upiId,
+      name: m.name,
+      shareRupees: paiseToRupees(m.sharePaise),
+      status: m.status,
+      isCreator: m.upiId === s.creator,
+      isYou: m.upiId === viewer,
+    }));
+    const youAreCreator = s.creator === viewer;
+    const owedToYou = youAreCreator
+      ? s.members.filter((m) => m.upiId !== s.creator && m.status === 'PENDING').reduce((a, m) => a + m.sharePaise, 0)
+      : 0;
+    const you = s.members.find((m) => m.upiId === viewer);
+    const youOwe = !youAreCreator && you && you.status === 'PENDING' ? you.sharePaise : 0;
+    return {
+      id: s.id,
+      creator: s.creator,
+      creatorName: (s.members.find((m) => m.upiId === s.creator) || {}).name,
+      description: s.description,
+      totalRupees: paiseToRupees(s.totalPaise),
+      createdAt: s.createdAt,
+      members,
+      youAreCreator,
+      owedToYouRupees: paiseToRupees(owedToYou),
+      youOweRupees: paiseToRupees(youOwe),
+      settled: s.members.every((m) => m.status === 'PAID'),
+    };
+  };
+
   // Wrap async handlers so rejected promises reach the error middleware.
   const asyncHandler = (fn) => (req, res, next) =>
     Promise.resolve(fn(req, res, next)).catch(next);
@@ -334,6 +365,47 @@ export function createApp(store) {
       id: result.id,
       rewardRupees: paiseToRupees(result.rewardPaise),
       balanceRupees: paiseToRupees(result.balancePaise),
+    });
+  });
+
+  // Create a group split: { creator, description?, total, members: [upiId,…] }.
+  app.post('/splits', (req, res) => {
+    const { creator, description, total, members } = req.body ?? {};
+    if (!creator) throw new ApiError(400, 'creator (UPI ID) is required');
+    if (total == null || total === '') throw new ApiError(400, 'total is required');
+    const totalPaise = rupeesToPaise(total);
+    if (Number.isNaN(totalPaise)) throw new ApiError(400, 'total must be a number');
+    if (!Array.isArray(members)) throw new ApiError(400, 'members must be a list of UPI IDs');
+    const split = store.createSplit({ creatorUpiId: creator, description, totalPaise, memberUpiIds: members });
+    res.status(201).json(serializeSplit(split, creator));
+  });
+
+  // A user's splits (created or participating in).
+  app.get('/users/:upiId/splits', (req, res) => {
+    store.requireUser(req.params.upiId, 'user');
+    const splits = store.getSplitsForUser(req.params.upiId).map((s) => serializeSplit(s, req.params.upiId));
+    res.json({ splits });
+  });
+
+  // A single split, from `viewer`'s perspective (defaults to the creator).
+  app.get('/splits/:id', (req, res) => {
+    const split = store.getSplit(req.params.id);
+    if (!split) throw new ApiError(404, 'split not found');
+    const viewer = req.query.viewer ? String(req.query.viewer) : split.creator;
+    res.json(serializeSplit(split, viewer));
+  });
+
+  // Settle your share of a split: { from, pin } (a transfer to the creator).
+  app.post('/splits/:id/pay', (req, res) => {
+    const { from, pin } = req.body ?? {};
+    if (!from) throw new ApiError(400, 'from (payer UPI ID) is required');
+    const { split, transaction } = store.paySplitShare(req.params.id, from, pin);
+    res.status(201).json({
+      split: serializeSplit(split, from),
+      transaction: serializeTxn(transaction),
+      payer: serializeUser(store.getUser(from)),
+      payee: serializeUser(store.getUser(split.creator)),
+      cardEarned: !!transaction.cardId,
     });
   });
 

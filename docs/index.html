@@ -158,6 +158,9 @@
           <span class="quick-icon">🙋</span><span>Request</span>
           <span id="req-badge" class="badge" hidden>0</span>
         </button>
+        <button class="quick-btn" data-go="screen-splits">
+          <span class="quick-icon">👥</span><span>Split</span>
+        </button>
         <button class="quick-btn" data-go="screen-rewards">
           <span class="quick-icon">🎁</span><span>Rewards</span>
         </button>
@@ -450,6 +453,64 @@
       <div id="ins-months" class="ins-months"></div>
       <h3 class="section-title">Top payees</h3>
       <div id="ins-payees" class="ins-payees"></div>
+    </section>
+
+    <!-- ============ SPLIT BILLS (list) ============ -->
+    <section id="screen-splits" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Split bills</h2>
+      </header>
+      <button class="btn primary full" id="btn-new-split">＋ New split</button>
+      <div id="splits-list" class="splits"></div>
+    </section>
+
+    <!-- ============ NEW SPLIT ============ -->
+    <section id="screen-split-new" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-splits">‹</button>
+        <h2>New split</h2>
+      </header>
+      <div class="card">
+        <form id="form-split">
+          <label>What's it for? <span class="optional">optional</span>
+            <input name="description" placeholder="e.g. Dinner, Cab, Trip" />
+          </label>
+          <label>Total amount (₹)
+            <input name="total" type="number" min="0.01" step="0.01" required />
+          </label>
+          <h3 class="section-title">Split with</h3>
+          <div id="split-members" class="split-picker"></div>
+          <p class="split-preview" id="split-preview">Select people and enter an amount.</p>
+          <button type="submit" class="btn primary">Create split</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ SPLIT DETAIL ============ -->
+    <section id="screen-split-detail" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-splits">‹</button>
+        <h2>Split details</h2>
+      </header>
+      <div class="card split-head">
+        <p class="split-desc" id="sd-desc">—</p>
+        <p class="split-total">₹<span id="sd-total">0.00</span></p>
+        <p class="split-meta" id="sd-meta">—</p>
+      </div>
+      <div class="split-status-banner" id="sd-banner" hidden></div>
+      <h3 class="section-title">Members</h3>
+      <div id="sd-members" class="sd-members"></div>
+      <div id="sd-pay" class="card" hidden>
+        <p class="onboard-num">You owe <span id="sd-owe">₹0.00</span> to <span id="sd-creator">—</span></p>
+        <form id="form-split-pay">
+          <label>Your payment PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Pay your share</button>
+        </form>
+      </div>
     </section>
   </div>
 

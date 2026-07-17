@@ -61,6 +61,7 @@ function seedDb() {
     transactions: [],
     requests: [],
     cards: [],
+    splits: [],
     otps: {},
     sessions: {},
   };
@@ -131,6 +132,27 @@ const serializeRequest = (r) => ({
   note: r.note, status: r.status, txnId: r.txnId, createdAt: r.createdAt, resolvedAt: r.resolvedAt,
 });
 
+// A split from `viewer`'s perspective (adds you-owe / you're-owed).
+function splitView(d, s, viewer) {
+  const members = s.members.map((m) => ({
+    upiId: m.upiId, name: (d.accounts[m.upiId] || {}).holderName || m.upiId,
+    shareRupees: paiseToRupees(m.sharePaise), status: m.status,
+    isCreator: m.upiId === s.creator, isYou: m.upiId === viewer,
+  }));
+  const youAreCreator = s.creator === viewer;
+  const owedToYou = youAreCreator
+    ? s.members.filter((m) => m.upiId !== s.creator && m.status === 'PENDING').reduce((a, m) => a + m.sharePaise, 0)
+    : 0;
+  const you = s.members.find((m) => m.upiId === viewer);
+  const youOwe = !youAreCreator && you && you.status === 'PENDING' ? you.sharePaise : 0;
+  return {
+    id: s.id, creator: s.creator, creatorName: (d.accounts[s.creator] || {}).holderName || s.creator,
+    description: s.description, totalRupees: paiseToRupees(s.totalPaise), createdAt: s.createdAt,
+    members, youAreCreator, owedToYouRupees: paiseToRupees(owedToYou), youOweRupees: paiseToRupees(youOwe),
+    settled: s.members.every((m) => m.status === 'PAID'),
+  };
+}
+
 let _db;
 function bankName(id) { return (_db?.banks?.[id] || {}).name || id; }
 
@@ -146,6 +168,7 @@ function ensure(d) {
   if (!d.requests) d.requests = [];
   if (!d.transactions) d.transactions = [];
   if (!d.cards) d.cards = [];
+  if (!d.splits) d.splits = [];
   if (!d.otps) d.otps = {};
   if (!d.sessions) d.sessions = {};
 }
@@ -509,6 +532,68 @@ async function api(path, options = {}) {
     return { rewards };
   }
 
+  // Create a group split.
+  if (rawPath === '/splits' && method === 'POST') {
+    const { creator, description, total, members } = body;
+    if (!creator) throw new Error('creator (UPI ID) is required');
+    if (total == null || total === '') throw new Error('total is required');
+    const totalPaise = rupeesToPaise(total);
+    if (Number.isNaN(totalPaise)) throw new Error('total must be a number');
+    if (totalPaise <= 0) throw new Error('amount must be a positive value');
+    if (!Array.isArray(members)) throw new Error('members must be a list of UPI IDs');
+    const ids = [creator, ...members].filter((v, i, a) => a.indexOf(v) === i);
+    if (ids.filter((id) => id !== creator).length === 0) throw new Error('add at least one other person to split with');
+    for (const id of ids) {
+      const u = requireUser(d, id, 'member');
+      if (u.kind !== 'personal') throw new Error(`'${id}' can't be part of a split`);
+    }
+    const n = ids.length, base = Math.floor(totalPaise / n), remainder = totalPaise - base * n;
+    const split = {
+      id: uuid(), creator, description: description ? String(description) : null, totalPaise, createdAt: new Date().toISOString(),
+      members: ids.map((id, i) => ({ upiId: id, sharePaise: base + (i < remainder ? 1 : 0), status: id === creator ? 'PAID' : 'PENDING', txnId: null })),
+    };
+    d.splits.push(split);
+    saveDb(d);
+    return splitView(d, split, creator);
+  }
+
+  // A user's splits (created or participating in).
+  if (parts[0] === 'users' && parts.length === 3 && parts[2] === 'splits' && method === 'GET') {
+    const upiId = decodeURIComponent(parts[1]);
+    requireUser(d, upiId, 'user');
+    const splits = d.splits.filter((s) => s.members.some((m) => m.upiId === upiId)).slice().reverse().map((s) => splitView(d, s, upiId));
+    return { splits };
+  }
+
+  // A single split (from viewer's perspective).
+  if (parts[0] === 'splits' && parts.length === 2 && method === 'GET') {
+    const id = decodeURIComponent(parts[1]);
+    const s = d.splits.find((x) => x.id === id);
+    if (!s) throw new Error('split not found');
+    return splitView(d, s, params.get('viewer') || s.creator);
+  }
+
+  // Settle your share of a split.
+  if (parts[0] === 'splits' && parts.length === 3 && parts[2] === 'pay' && method === 'POST') {
+    const id = decodeURIComponent(parts[1]);
+    const s = d.splits.find((x) => x.id === id);
+    if (!s) throw new Error('split not found');
+    const { from, pin } = body;
+    if (!from) throw new Error('from (payer UPI ID) is required');
+    if (from === s.creator) throw new Error('the creator fronted the bill; nothing to pay');
+    const member = s.members.find((m) => m.upiId === from);
+    if (!member) throw new Error('you are not part of this split');
+    if (member.status === 'PAID') throw new Error('your share is already settled');
+    const txn = doTransfer(d, from, s.creator, member.sharePaise, s.description ? `Split: ${s.description}` : 'Split share', pin);
+    member.status = 'PAID'; member.txnId = txn.id;
+    saveDb(d);
+    return {
+      split: splitView(d, s, from), transaction: serializeTxn(txn),
+      payer: serializeUser(d.accounts[from]), payee: serializeUser(d.accounts[s.creator]),
+      cardEarned: !!txn.cardId,
+    };
+  }
+
   // Scratch a card: reveal + credit the reward.
   if (parts[0] === 'rewards' && parts.length === 3 && parts[2] === 'scratch' && method === 'POST') {
     const cardId = decodeURIComponent(parts[1]);
@@ -530,7 +615,7 @@ async function api(path, options = {}) {
 /* ============================================================
  * UI (mirrors the real app's front-end)
  * ========================================================== */
-const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null, link: null, bill: null, billers: [], lastReceipt: null };
+const state = { user: null, scanner: null, otpToken: null, pendingPhone: null, resendTimer: null, link: null, bill: null, billers: [], lastReceipt: null, splitId: null };
 const $ = (sel) => document.querySelector(sel);
 const $$ = (sel) => document.querySelectorAll(sel);
 
@@ -553,6 +638,7 @@ function show(screenId) {
   if (screenId === 'screen-profile') renderProfile();
   if (screenId === 'screen-rewards') renderRewards();
   if (screenId === 'screen-insights') renderInsights();
+  if (screenId === 'screen-splits') renderSplits();
   if (screenId !== 'screen-home') $('#account-switcher').hidden = true;
 }
 
@@ -1189,6 +1275,156 @@ async function renderInsights() {
     $('#ins-months').innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`;
   }
 }
+
+/* ---- Split bills (group) ---- */
+async function renderSplits() {
+  const list = $('#splits-list');
+  list.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const { splits } = await api(`/users/${encodeURIComponent(state.user.upiId)}/splits`);
+    if (!splits.length) {
+      list.innerHTML = '<p class="empty">No splits yet. Create one to share a bill.</p>';
+      return;
+    }
+    list.innerHTML = '';
+    for (const s of splits) {
+      let tag;
+      if (s.settled) tag = '<span class="split-tag ok">Settled</span>';
+      else if (s.youAreCreator) tag = `<span class="split-tag owed">You're owed ₹${rupees(s.owedToYouRupees)}</span>`;
+      else if (s.youOweRupees > 0) tag = `<span class="split-tag owe">You owe ₹${rupees(s.youOweRupees)}</span>`;
+      else tag = '<span class="split-tag ok">Settled</span>';
+      const el = document.createElement('button');
+      el.className = 'split-item';
+      el.dataset.split = s.id;
+      el.innerHTML = `
+        <div class="split-item-top">
+          <span class="split-item-desc">${escapeHtml(s.description || 'Split')}</span>
+          <span class="split-item-total">₹${rupees(s.totalRupees)}</span>
+        </div>
+        <div class="split-item-sub">${tag} · ${s.members.length} people</div>`;
+      list.appendChild(el);
+    }
+  } catch (err) { list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
+}
+
+$('#splits-list').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-split]');
+  if (item) openSplitDetail(item.dataset.split);
+});
+
+$('#btn-new-split').addEventListener('click', openNewSplit);
+
+async function openNewSplit() {
+  $('#form-split').reset();
+  $('#split-preview').textContent = 'Select people and enter an amount.';
+  const box = $('#split-members');
+  box.innerHTML = '<p class="empty">Loading…</p>';
+  show('screen-split-new');
+  try {
+    const { contacts } = await api(`/contacts?exclude=${encodeURIComponent(state.user.upiId)}`);
+    box.innerHTML = '';
+    for (const c of contacts) {
+      const label = document.createElement('label');
+      label.className = 'split-pick';
+      label.innerHTML = `<input type="checkbox" value="${escapeAttr(c.upiId)}" />
+        <span class="avatar sm" style="background:${colorFor(c.name)}">${escapeHtml(initials(c.name))}</span>
+        <span class="split-pick-name">${escapeHtml(c.name)}</span>`;
+      box.appendChild(label);
+    }
+  } catch (err) { box.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
+}
+
+function updateSplitPreview() {
+  const total = Number($('#form-split').total.value) || 0;
+  const checked = $('#split-members').querySelectorAll('input:checked').length;
+  const prev = $('#split-preview');
+  if (!total || !checked) { prev.textContent = 'Select people and enter an amount.'; return; }
+  const n = checked + 1;
+  prev.textContent = `₹${rupees(total)} split ${n} ways ≈ ₹${rupees(total / n)} each (you + ${checked}).`;
+}
+$('#form-split').addEventListener('input', updateSplitPreview);
+
+$('#form-split').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const f = new FormData(e.target);
+  const members = [...$('#split-members').querySelectorAll('input:checked')].map((c) => c.value);
+  if (!members.length) return toast('Select at least one person to split with', 'err');
+  try {
+    const split = await api('/splits', {
+      method: 'POST',
+      body: JSON.stringify({
+        creator: state.user.upiId,
+        description: f.get('description') || undefined,
+        total: Number(f.get('total')),
+        members,
+      }),
+    });
+    toast('Split created', 'ok');
+    openSplitDetail(split.id);
+  } catch (err) { toast(err.message, 'err'); }
+});
+
+async function openSplitDetail(id) {
+  state.splitId = id;
+  show('screen-split-detail');
+  await renderSplitDetail();
+}
+
+async function renderSplitDetail() {
+  try {
+    const s = await api(`/splits/${state.splitId}?viewer=${encodeURIComponent(state.user.upiId)}`);
+    $('#sd-desc').textContent = s.description || 'Split';
+    $('#sd-total').textContent = rupees(s.totalRupees);
+    $('#sd-meta').textContent = `Created by ${s.youAreCreator ? 'you' : s.creatorName} · ${s.members.length} people`;
+
+    const banner = $('#sd-banner');
+    if (s.settled) { banner.hidden = false; banner.className = 'split-status-banner ok'; banner.textContent = '✓ All settled'; }
+    else if (s.youAreCreator) { banner.hidden = false; banner.className = 'split-status-banner owed'; banner.textContent = `You're owed ₹${rupees(s.owedToYouRupees)}`; }
+    else if (s.youOweRupees > 0) { banner.hidden = false; banner.className = 'split-status-banner owe'; banner.textContent = `You owe ₹${rupees(s.youOweRupees)}`; }
+    else banner.hidden = true;
+
+    const mem = $('#sd-members');
+    mem.innerHTML = '';
+    for (const m of s.members) {
+      const badge = m.status === 'PAID'
+        ? `<span class="sd-badge ok">${m.isCreator ? 'Paid bill' : 'Settled'}</span>`
+        : '<span class="sd-badge pending">Pending</span>';
+      const row = document.createElement('div');
+      row.className = 'sd-member';
+      row.innerHTML = `
+        <span class="avatar sm" style="background:${colorFor(m.name)}">${escapeHtml(initials(m.name))}</span>
+        <span class="sd-member-text">
+          <span class="sd-member-name">${escapeHtml(m.name)}${m.isYou ? ' (you)' : ''}</span>
+          <span class="sd-member-share">₹${rupees(m.shareRupees)}</span>
+        </span>
+        ${badge}`;
+      mem.appendChild(row);
+    }
+
+    const you = s.members.find((m) => m.isYou);
+    const canPay = you && !s.youAreCreator && you.status === 'PENDING';
+    $('#sd-pay').hidden = !canPay;
+    if (canPay) {
+      $('#sd-owe').textContent = `₹${rupees(you.shareRupees)}`;
+      $('#sd-creator').textContent = s.creatorName;
+      $('#form-split-pay').reset();
+    }
+  } catch (err) { toast(err.message, 'err'); }
+}
+
+$('#form-split-pay').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const pin = new FormData(e.target).get('pin');
+  try {
+    const result = await api(`/splits/${state.splitId}/pay`, {
+      method: 'POST', body: JSON.stringify({ from: state.user.upiId, pin }),
+    });
+    state.user = result.payer;
+    saveSession(result.payer.upiId);
+    renderHome();
+    showReceipt(result, 'Split share paid');
+  } catch (err) { toast(err.message, 'err'); }
+});
 
 $('#btn-switch-account').addEventListener('click', () => {
   const panel = $('#account-switcher');

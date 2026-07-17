@@ -131,6 +131,25 @@ export function createStore({
       created_at   TEXT NOT NULL
     );
     CREATE INDEX IF NOT EXISTS idx_card_upi ON scratch_cards(upi_id);
+
+    CREATE TABLE IF NOT EXISTS splits (
+      id          TEXT PRIMARY KEY,
+      creator_upi TEXT NOT NULL REFERENCES accounts(upi_id),
+      description TEXT,
+      total_paise INTEGER NOT NULL,
+      created_at  TEXT NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS split_members (
+      id          TEXT PRIMARY KEY,
+      split_id    TEXT NOT NULL REFERENCES splits(id),
+      upi_id      TEXT NOT NULL REFERENCES accounts(upi_id),
+      share_paise INTEGER NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'PENDING',
+      txn_id      TEXT,
+      created_at  TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_split_member_upi ON split_members(upi_id);
+    CREATE INDEX IF NOT EXISTS idx_split_member_split ON split_members(split_id);
   `);
 
   // Seed the dummy banks + accounts once (only into an empty DB).
@@ -259,6 +278,25 @@ export function createStore({
     cardsForUser: db.prepare('SELECT * FROM scratch_cards WHERE upi_id = ? ORDER BY rowid DESC'),
     getCard: db.prepare('SELECT * FROM scratch_cards WHERE id = ?'),
     scratchCardStmt: db.prepare('UPDATE scratch_cards SET scratched = 1 WHERE id = ?'),
+    insertSplit: db.prepare(
+      'INSERT INTO splits (id, creator_upi, description, total_paise, created_at) VALUES (?, ?, ?, ?, ?)',
+    ),
+    getSplitRow: db.prepare('SELECT * FROM splits WHERE id = ?'),
+    insertSplitMember: db.prepare(
+      `INSERT INTO split_members (id, split_id, upi_id, share_paise, status, txn_id, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+    ),
+    membersForSplit: db.prepare(
+      `SELECT sm.*, a.holder_name FROM split_members sm
+       JOIN accounts a ON a.upi_id = sm.upi_id
+       WHERE sm.split_id = ? ORDER BY sm.rowid`,
+    ),
+    splitIdsForUser: db.prepare(
+      'SELECT split_id FROM split_members WHERE upi_id = ? ORDER BY rowid DESC',
+    ),
+    setSplitMemberPaid: db.prepare(
+      "UPDATE split_members SET status = 'PAID', txn_id = ? WHERE split_id = ? AND upi_id = ?",
+    ),
   };
 
   function inTransaction(fn) {
@@ -605,6 +643,89 @@ export function createStore({
     return getUser(upiId);
   }
 
+  /* ---------------- Split bills (group) ---------------- */
+
+  const toSplit = (row) =>
+    row && {
+      id: row.id, creator: row.creator_upi, description: row.description,
+      totalPaise: row.total_paise, createdAt: row.created_at,
+    };
+  const toMember = (row) =>
+    row && {
+      upiId: row.upi_id, name: row.holder_name, sharePaise: row.share_paise,
+      status: row.status, txnId: row.txn_id,
+    };
+
+  function getSplit(id) {
+    const row = stmts.getSplitRow.get(id);
+    if (!row) return null;
+    return { ...toSplit(row), members: stmts.membersForSplit.all(id).map(toMember) };
+  }
+
+  /**
+   * Create a group split: the creator fronts a bill of `totalPaise`, split
+   * equally among themselves + the given members. The creator's share is
+   * marked PAID (they paid the bill); everyone else owes their share to the
+   * creator and settles via a normal PIN-authorised transfer.
+   */
+  function createSplit({ creatorUpiId, description, totalPaise, memberUpiIds }) {
+    if (!Number.isInteger(totalPaise) || totalPaise <= 0) {
+      throw new ApiError(400, 'amount must be a positive value');
+    }
+    // De-duplicate; the creator is always a member.
+    const ids = [creatorUpiId, ...(memberUpiIds || [])].filter((v, i, a) => a.indexOf(v) === i);
+    if (ids.filter((id) => id !== creatorUpiId).length === 0) {
+      throw new ApiError(400, 'add at least one other person to split with');
+    }
+    for (const id of ids) {
+      const u = requireUser(id, 'member');
+      if (u.kind !== 'personal') throw new ApiError(400, `'${id}' can't be part of a split`);
+    }
+
+    // Equal shares in integer paise; the remainder paise go to the first members
+    // so the shares sum to the total exactly.
+    const n = ids.length;
+    const base = Math.floor(totalPaise / n);
+    const remainder = totalPaise - base * n;
+    const now = new Date().toISOString();
+    const splitId = randomUUID();
+
+    return inTransaction(() => {
+      stmts.insertSplit.run(splitId, creatorUpiId, description ? String(description) : null, totalPaise, now);
+      ids.forEach((id, i) => {
+        const share = base + (i < remainder ? 1 : 0);
+        const isCreator = id === creatorUpiId;
+        stmts.insertSplitMember.run(randomUUID(), splitId, id, share, isCreator ? 'PAID' : 'PENDING', null, now);
+      });
+      return getSplit(splitId);
+    });
+  }
+
+  function getSplitsForUser(upiId) {
+    requireUser(upiId, 'user');
+    return stmts.splitIdsForUser.all(upiId).map((r) => getSplit(r.split_id)).filter(Boolean);
+  }
+
+  /** A member settles their share: a PIN-authorised transfer to the creator. */
+  function paySplitShare(splitId, fromUpiId, pin) {
+    const split = getSplit(splitId);
+    if (!split) throw new ApiError(404, 'split not found');
+    if (fromUpiId === split.creator) throw new ApiError(400, 'the creator fronted the bill; nothing to pay');
+    const member = split.members.find((m) => m.upiId === fromUpiId);
+    if (!member) throw new ApiError(404, 'you are not part of this split');
+    if (member.status === 'PAID') throw new ApiError(409, 'your share is already settled');
+
+    const txn = transfer({
+      fromUpiId,
+      toUpiId: split.creator,
+      amountPaise: member.sharePaise,
+      note: split.description ? `Split: ${split.description}` : 'Split share',
+      pin,
+    });
+    stmts.setSplitMemberPaid.run(txn.id, splitId, fromUpiId);
+    return { split: getSplit(splitId), transaction: txn };
+  }
+
   function getTransactions(upiId) {
     return stmts.txnsForUser.all(upiId, upiId).map(toTxn);
   }
@@ -728,6 +849,7 @@ export function createStore({
     changePin,
     transfer, getTransactions, getInsights,
     getRewards, scratchCard,
+    createSplit, getSplit, getSplitsForUser, paySplitShare,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,
   };

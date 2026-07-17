@@ -318,6 +318,83 @@ test('insights summarise paid vs received, by month and top payees', async () =>
   assert.equal(priya.name, 'Priya Shah');
 });
 
+test('a split divides a bill equally and the creator is pre-settled', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  const res = await request(app)
+    .post('/splits')
+    .send({ creator: 'ravi@hdfc', description: 'Dinner', total: 900, members: ['priya@hdfc', 'ravi@sbi'] })
+    .expect(201);
+  assert.equal(res.body.totalRupees, 900);
+  assert.equal(res.body.members.length, 3); // creator + 2 others
+  // Shares sum to the total.
+  const sum = res.body.members.reduce((a, m) => a + m.shareRupees, 0);
+  assert.equal(sum, 900);
+  const creator = res.body.members.find((m) => m.upiId === 'ravi@hdfc');
+  assert.equal(creator.status, 'PAID'); // creator fronted the bill
+  assert.equal(creator.isCreator, true);
+  assert.equal(res.body.members.filter((m) => m.status === 'PENDING').length, 2);
+  assert.equal(res.body.owedToYouRupees, 600); // two ₹300 shares owed to Ravi
+});
+
+test('a split needs at least one other member', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  await request(app).post('/splits').send({ creator: 'ravi@hdfc', total: 100, members: [] }).expect(400);
+  await request(app).post('/splits').send({ creator: 'ravi@hdfc', total: 100, members: ['ravi@hdfc'] }).expect(400);
+});
+
+test('paying a split share transfers to the creator and settles the member', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc'); // 5000
+  await claim(app, 'priya@hdfc'); // 8000, will pay her share
+  const split = (await request(app)
+    .post('/splits')
+    .send({ creator: 'ravi@hdfc', description: 'Cab', total: 300, members: ['priya@hdfc'] })
+    .expect(201)).body;
+  const share = split.members.find((m) => m.upiId === 'priya@hdfc').shareRupees; // 150
+
+  const pay = await request(app)
+    .post(`/splits/${split.id}/pay`)
+    .send({ from: 'priya@hdfc', pin: PIN })
+    .expect(201);
+  assert.equal(pay.body.transaction.amountRupees, share);
+  assert.equal(pay.body.payee.name, 'Ravi Kumar');
+  assert.equal(await balance(app, 'ravi@hdfc'), 5000 + share); // creator reimbursed
+  assert.equal(await balance(app, 'priya@hdfc'), 8000 - share);
+  // Priya's share is now settled and the whole split is settled.
+  const after = (await request(app).get(`/splits/${split.id}`).query({ viewer: 'priya@hdfc' }).expect(200)).body;
+  assert.equal(after.members.find((m) => m.upiId === 'priya@hdfc').status, 'PAID');
+  assert.equal(after.settled, true);
+  assert.equal(after.youOweRupees, 0);
+});
+
+test('a member cannot pay their split share twice, and the creator has nothing to pay', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  await claim(app, 'priya@hdfc');
+  const split = (await request(app)
+    .post('/splits')
+    .send({ creator: 'ravi@hdfc', total: 200, members: ['priya@hdfc'] })
+    .expect(201)).body;
+  await request(app).post(`/splits/${split.id}/pay`).send({ from: 'priya@hdfc', pin: PIN }).expect(201);
+  await request(app).post(`/splits/${split.id}/pay`).send({ from: 'priya@hdfc', pin: PIN }).expect(409);
+  await request(app).post(`/splits/${split.id}/pay`).send({ from: 'ravi@hdfc', pin: PIN }).expect(400);
+});
+
+test("a user's splits list includes ones they created and ones they're in", async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  await request(app).post('/splits').send({ creator: 'ravi@hdfc', description: 'Trip', total: 600, members: ['priya@hdfc'] }).expect(201);
+  const ravi = (await request(app).get('/users/ravi@hdfc/splits').expect(200)).body;
+  assert.equal(ravi.splits.length, 1);
+  assert.equal(ravi.splits[0].youAreCreator, true);
+  const priya = (await request(app).get('/users/priya@hdfc/splits').expect(200)).body;
+  assert.equal(priya.splits.length, 1);
+  assert.equal(priya.splits[0].youAreCreator, false);
+  assert.equal(priya.splits[0].youOweRupees, 300);
+});
+
 test('QR endpoint returns a upi:// link and PNG for an account', async () => {
   const app = makeApp();
   const res = await request(app).get('/users/priya@hdfc/qr').query({ amount: 250, note: 'Lunch' }).expect(200);

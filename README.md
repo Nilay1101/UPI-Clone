@@ -71,8 +71,8 @@ banks/accounts:
 The home screen is **GPay-style**: a **search bar** (find a person by name or
 UPI ID, a biller by name or category, or just type any UPI ID to pay it), a
 **People** row (tap a contact to pay), quick actions (Scan & Pay, Pay UPI ID,
-Receive, Request, Rewards, Insights, History), a **⚙️ Profile** button, and a
-**Bills & recharges** grid (mobile,
+Receive, Request, Split, Rewards, Insights, History), a **⚙️ Profile** button,
+and a **Bills & recharges** grid (mobile,
 electricity, DTH, water, gas). Each
 category lists **operators** (Airtel/Jio/Vi, …); you enter a consumer number,
 **fetch the bill** (a simulated amount due + due date + period), then pay it —
@@ -88,6 +88,13 @@ requires the current PIN and obeys the same lockout rules).
 You can also **request money** ("collect"): ask another user to pay you, and
 they approve (authorising with their PIN — which runs a normal transfer, so
 the PIN + lockout rules apply) or decline.
+
+**Split bills with a group** (Splitwise-style): the person who paid a bill
+creates a **split** — a total plus the people to share it with — and the app
+divides it equally (to the exact paisa). The creator's share is marked paid
+(they fronted the bill); everyone else **owes their share** and settles it
+with a **PIN-authorised transfer to the creator**. Each split shows who's
+paid and who's pending, and how much **you owe** or **you're owed**.
 
 PINs are never stored in plaintext — only a salted scrypt hash is kept, and a
 wrong or missing PIN rejects the payment without moving any money. After 3
@@ -123,6 +130,10 @@ lock auto-expires.
 | GET    | `/users/:upiId/requests`      | A user's requests: `{ incoming, outgoing }` |
 | POST   | `/requests/:id/approve`       | Payer approves & pays: `{ pin }` |
 | POST   | `/requests/:id/decline`       | Decline a pending request |
+| POST   | `/splits`                     | Create a group split: `{ creator, description?, total, members: [upiId,…] }` |
+| GET    | `/users/:upiId/splits`        | Splits you created or are part of |
+| GET    | `/splits/:id`                 | A split's detail; optional `?viewer=` for your owe/owed view |
+| POST   | `/splits/:id/pay`             | Settle your share: `{ from, pin }` (transfer to the creator) |
 
 `pin` is the payer's 4–6 digit payment PIN. Amounts in requests/responses are
 in **rupees**. Errors return `{ "error": "..." }` with an appropriate HTTP
