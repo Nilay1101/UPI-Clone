@@ -532,6 +532,34 @@ async function api(path, options = {}) {
     return { rewards };
   }
 
+  // Recent-activity feed: money received, requests to pay, split shares owed.
+  if (parts[0] === 'users' && parts.length === 3 && parts[2] === 'notifications' && method === 'GET') {
+    const upiId = decodeURIComponent(parts[1]);
+    requireUser(d, upiId, 'user');
+    const items = [];
+    for (const t of d.transactions) {
+      if (t.to === upiId && t.from !== upiId) {
+        const from = d.accounts[t.from];
+        items.push({ kind: 'received', id: t.id, amountRupees: paiseToRupees(t.amountPaise), otherUpi: t.from, otherName: from ? from.holderName : t.from, note: t.note, createdAt: t.createdAt });
+      }
+    }
+    for (const r of d.requests) {
+      if (r.to === upiId && r.status === 'PENDING') {
+        const from = d.accounts[r.from];
+        items.push({ kind: 'request', id: r.id, amountRupees: paiseToRupees(r.amountPaise), otherUpi: r.from, otherName: from ? from.holderName : r.from, note: r.note, createdAt: r.createdAt });
+      }
+    }
+    for (const s of d.splits) {
+      if (s.creator === upiId) continue;
+      const me = s.members.find((m) => m.upiId === upiId);
+      if (!me || me.status !== 'PENDING') continue;
+      const creator = d.accounts[s.creator];
+      items.push({ kind: 'split', id: s.id, amountRupees: paiseToRupees(me.sharePaise), otherUpi: s.creator, otherName: creator ? creator.holderName : s.creator, note: s.description, createdAt: s.createdAt });
+    }
+    items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+    return { notifications: items };
+  }
+
   // Create a group split.
   if (rawPath === '/splits' && method === 'POST') {
     const { creator, description, total, members } = body;
@@ -639,8 +667,11 @@ function show(screenId) {
   if (screenId === 'screen-rewards') renderRewards();
   if (screenId === 'screen-insights') renderInsights();
   if (screenId === 'screen-splits') renderSplits();
+  if (screenId === 'screen-notifications') openNotifications();
   if (screenId !== 'screen-home') $('#account-switcher').hidden = true;
 }
+
+document.getElementById('btn-notifications').addEventListener('click', () => show('screen-notifications'));
 
 const rupees = (n) => Number(n).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const escapeHtml = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -664,6 +695,7 @@ function renderHome() {
   $('#home-bank').textContent = `${state.user.bankName} · ${state.user.accountMasked}`;
   $('#home-balance').textContent = rupees(state.user.balanceRupees);
   refreshRequestBadge();
+  refreshNotifBadge();
   renderPeople();
   renderBills();
 }
@@ -1651,29 +1683,143 @@ $('#requests-incoming').addEventListener('click', (e) => {
   else if (decline) declineRequest(decline.dataset.decline);
 });
 
-/* ---- History ---- */
+/* ---- History (with filters) ---- */
+const histFilters = { dir: 'all', q: '', month: '' };
+
 async function loadHistory() {
   const list = $('#history-list');
   list.innerHTML = '<p class="empty">Loading…</p>';
   try {
     const { transactions } = await api(`/users/${encodeURIComponent(state.user.upiId)}/transactions`);
-    if (!transactions.length) { list.innerHTML = '<p class="empty">No transactions yet.</p>'; return; }
-    list.innerHTML = '';
-    for (const t of transactions) {
-      const outgoing = t.from === state.user.upiId;
-      const other = outgoing ? t.to : t.from;
-      const row = document.createElement('div');
-      row.className = 'txn';
-      row.innerHTML = `
-        <div class="txn-main">
-          <span class="txn-party">${outgoing ? 'To' : 'From'} ${escapeHtml(other)}</span>
-          <span class="txn-note">${t.note ? escapeHtml(t.note) : 'No note'} · ${new Date(t.createdAt).toLocaleString('en-IN')}</span>
-        </div>
-        <span class="txn-amount ${outgoing ? 'out' : 'in'}">${outgoing ? '−' : '+'}₹${rupees(t.amountRupees)}</span>`;
-      list.appendChild(row);
-    }
+    state.txns = transactions;
+    const months = [...new Set(transactions.map((t) => t.createdAt.slice(0, 7)))];
+    const monthLabel = (ym) => {
+      const [y, m] = ym.split('-');
+      return new Date(y, m - 1).toLocaleString('en-IN', { month: 'short', year: 'numeric' });
+    };
+    const sel = $('#history-month');
+    sel.innerHTML = '<option value="">All months</option>' +
+      months.map((m) => `<option value="${m}">${monthLabel(m)}</option>`).join('');
+    if (!months.includes(histFilters.month)) histFilters.month = '';
+    sel.value = histFilters.month;
+    renderHistoryList();
   } catch (err) { list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
 }
+
+function renderHistoryList() {
+  const list = $('#history-list');
+  const me = state.user.upiId;
+  let txns = state.txns || [];
+  if (histFilters.dir === 'sent') txns = txns.filter((t) => t.from === me);
+  else if (histFilters.dir === 'received') txns = txns.filter((t) => t.to === me);
+  if (histFilters.month) txns = txns.filter((t) => t.createdAt.slice(0, 7) === histFilters.month);
+  if (histFilters.q) {
+    const q = histFilters.q.toLowerCase();
+    txns = txns.filter((t) =>
+      (t.note || '').toLowerCase().includes(q) ||
+      t.from.toLowerCase().includes(q) ||
+      t.to.toLowerCase().includes(q));
+  }
+  if (!(state.txns || []).length) { list.innerHTML = '<p class="empty">No transactions yet.</p>'; return; }
+  if (!txns.length) { list.innerHTML = '<p class="empty">No matching transactions.</p>'; return; }
+  list.innerHTML = '';
+  for (const t of txns) {
+    const outgoing = t.from === me;
+    const other = outgoing ? t.to : t.from;
+    const row = document.createElement('div');
+    row.className = 'txn';
+    row.innerHTML = `
+      <div class="txn-main">
+        <span class="txn-party">${outgoing ? 'To' : 'From'} ${escapeHtml(other)}</span>
+        <span class="txn-note">${t.note ? escapeHtml(t.note) : 'No note'} · ${new Date(t.createdAt).toLocaleString('en-IN')}</span>
+      </div>
+      <span class="txn-amount ${outgoing ? 'out' : 'in'}">${outgoing ? '−' : '+'}₹${rupees(t.amountRupees)}</span>`;
+    list.appendChild(row);
+  }
+}
+
+$('#history-chips').addEventListener('click', (e) => {
+  const chip = e.target.closest('[data-dir]');
+  if (!chip) return;
+  histFilters.dir = chip.dataset.dir;
+  $$('#history-chips .chip').forEach((c) => c.classList.toggle('active', c === chip));
+  renderHistoryList();
+});
+$('#history-search').addEventListener('input', (e) => { histFilters.q = e.target.value.trim(); renderHistoryList(); });
+$('#history-month').addEventListener('change', (e) => { histFilters.month = e.target.value; renderHistoryList(); });
+
+/* ---- Notifications ---- */
+const notifSeenKey = () => `upi_demo_notif_seen_${state.user ? state.user.upiId : ''}`;
+
+function timeAgo(iso) {
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 60) return 'just now';
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const dd = Math.floor(h / 24);
+  if (dd < 7) return `${dd}d ago`;
+  return new Date(iso).toLocaleDateString('en-IN');
+}
+
+async function refreshNotifBadge() {
+  if (!state.user) return;
+  const badge = $('#notif-badge');
+  try {
+    const { notifications } = await api(`/users/${encodeURIComponent(state.user.upiId)}/notifications`);
+    const seen = localStorage.getItem(notifSeenKey()) || '';
+    const unread = notifications.filter((n) => n.createdAt > seen).length;
+    badge.textContent = unread;
+    badge.hidden = unread === 0;
+  } catch { badge.hidden = true; }
+}
+
+const NOTIF_ICON = { received: '💰', request: '🙋', split: '👥' };
+function notifText(n) {
+  if (n.kind === 'received') return { title: `Received ₹${rupees(n.amountRupees)}`, sub: `from ${n.otherName}${n.note ? ` · ${n.note}` : ''}` };
+  if (n.kind === 'request') return { title: `${n.otherName} requested ₹${rupees(n.amountRupees)}`, sub: n.note || 'Tap to pay or decline' };
+  return { title: `Split: ${n.note || 'expense'}`, sub: `You owe ₹${rupees(n.amountRupees)} to ${n.otherName}` };
+}
+
+async function openNotifications() {
+  const list = $('#notif-list');
+  list.innerHTML = '<p class="empty">Loading…</p>';
+  try {
+    const { notifications } = await api(`/users/${encodeURIComponent(state.user.upiId)}/notifications`);
+    const seen = localStorage.getItem(notifSeenKey()) || '';
+    if (!notifications.length) {
+      list.innerHTML = '<p class="empty">You\'re all caught up — no new activity.</p>';
+    } else {
+      list.innerHTML = '';
+      for (const n of notifications) {
+        const { title, sub } = notifText(n);
+        const el = document.createElement('button');
+        el.className = 'notif' + (n.createdAt > seen ? ' unread' : '');
+        el.dataset.kind = n.kind;
+        el.dataset.id = n.id;
+        el.innerHTML = `
+          <span class="notif-icon">${NOTIF_ICON[n.kind] || '🔔'}</span>
+          <span class="notif-text">
+            <span class="notif-title">${escapeHtml(title)}</span>
+            <span class="notif-sub">${escapeHtml(sub)}</span>
+          </span>
+          <span class="notif-time">${timeAgo(n.createdAt)}</span>`;
+        list.appendChild(el);
+      }
+    }
+    localStorage.setItem(notifSeenKey(), new Date().toISOString());
+    refreshNotifBadge();
+  } catch (err) { list.innerHTML = `<p class="empty">${escapeHtml(err.message)}</p>`; }
+}
+
+$('#notif-list').addEventListener('click', (e) => {
+  const item = e.target.closest('[data-kind]');
+  if (!item) return;
+  if (item.dataset.kind === 'request') show('screen-request');
+  else if (item.dataset.kind === 'split') openSplitDetail(item.dataset.id);
+  else show('screen-history');
+});
 
 /* ---- Boot ---- */
 (async function boot() {

@@ -413,6 +413,49 @@ select:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px
 .sd-badge.ok { background: #e6f6ee; color: var(--green); }
 .sd-badge.pending { background: #fef3e2; color: #b7791f; }
 
+/* ---------- Home actions (bell + profile) ---------- */
+.home-actions { display: flex; align-items: center; gap: 8px; }
+.icon-btn {
+  position: relative; background: #fff; border: 1px solid var(--line);
+  width: 40px; height: 40px; border-radius: 50%; font-size: 17px; line-height: 1; cursor: pointer;
+}
+#notif-badge {
+  position: absolute; top: -4px; right: -4px; min-width: 18px; height: 18px;
+  padding: 0 5px; border-radius: 9px; background: var(--red); color: #fff;
+  font-size: 11px; font-weight: 700; display: flex; align-items: center; justify-content: center;
+}
+
+/* ---------- History filters ---------- */
+.history-filters { margin-bottom: 14px; }
+.chips { display: flex; gap: 8px; margin-bottom: 10px; }
+.chip {
+  border: 1px solid var(--line); background: #fff; color: var(--muted);
+  border-radius: 999px; padding: 7px 16px; font-size: 13px; font-weight: 600; cursor: pointer;
+}
+.chip.active { background: var(--violet); border-color: var(--violet); color: #fff; }
+.filter-row { display: flex; gap: 8px; }
+#history-search { flex: 1; padding: 10px 12px; border: 1px solid var(--line); border-radius: 12px; font-size: 14px; color: var(--ink); }
+#history-search:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px rgba(109, 94, 252, 0.15); }
+#history-month { width: auto; flex: 0 0 auto; margin-top: 0; font-size: 13px; }
+
+/* ---------- Notifications ---------- */
+.notif-list { display: flex; flex-direction: column; gap: 8px; }
+.notif {
+  display: flex; align-items: center; gap: 12px; width: 100%; text-align: left; cursor: pointer;
+  background: #fff; border: none; border-radius: 14px; padding: 12px 14px;
+  box-shadow: 0 3px 12px rgba(20, 20, 50, 0.05);
+}
+.notif:active { transform: scale(0.99); }
+.notif.unread { border-left: 3px solid var(--violet); }
+.notif-icon {
+  width: 40px; height: 40px; border-radius: 50%; flex: 0 0 auto; font-size: 20px;
+  display: grid; place-items: center; background: #eceafe;
+}
+.notif-text { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.notif-title { font-weight: 600; font-size: 14px; }
+.notif-sub { color: var(--muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.notif-time { color: var(--muted); font-size: 11px; white-space: nowrap; flex: 0 0 auto; align-self: flex-start; }
+
 /* ---------- Sub screens ---------- */
 .sub-header { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
 .sub-header h2 { margin: 0; font-size: 18px; }

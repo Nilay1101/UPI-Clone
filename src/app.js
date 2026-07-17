@@ -395,6 +395,21 @@ export function createApp(store) {
     res.json(serializeSplit(split, viewer));
   });
 
+  // Recent-activity feed: money received, requests to pay, split shares owed.
+  app.get('/users/:upiId/notifications', (req, res) => {
+    store.requireUser(req.params.upiId, 'user');
+    const notifications = store.getNotifications(req.params.upiId).map((n) => ({
+      kind: n.kind,
+      id: n.id,
+      amountRupees: paiseToRupees(n.amountPaise),
+      otherUpi: n.otherUpi,
+      otherName: n.otherName,
+      note: n.note,
+      createdAt: n.createdAt,
+    }));
+    res.json({ notifications });
+  });
+
   // Settle your share of a split: { from, pin } (a transfer to the creator).
   app.post('/splits/:id/pay', (req, res) => {
     const { from, pin } = req.body ?? {};

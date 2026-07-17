@@ -117,7 +117,10 @@
           <p class="greeting">Hi, <span id="home-name">—</span></p>
           <p class="upi-id" id="home-upiid">—</p>
         </div>
-        <button class="profile-btn" data-go="screen-profile" aria-label="Profile &amp; settings">⚙️</button>
+        <div class="home-actions">
+          <button class="icon-btn" id="btn-notifications" aria-label="Notifications">🔔<span id="notif-badge" class="badge" hidden>0</span></button>
+          <button class="profile-btn" data-go="screen-profile" aria-label="Profile &amp; settings">⚙️</button>
+        </div>
       </header>
 
       <button class="search-bar" id="btn-search" type="button">
@@ -348,7 +351,31 @@
         <button class="back" data-go="screen-home">‹</button>
         <h2>Transactions</h2>
       </header>
+
+      <div class="history-filters">
+        <div class="chips" id="history-chips">
+          <button type="button" class="chip active" data-dir="all">All</button>
+          <button type="button" class="chip" data-dir="sent">Sent</button>
+          <button type="button" class="chip" data-dir="received">Received</button>
+        </div>
+        <div class="filter-row">
+          <input id="history-search" type="search" placeholder="Search notes or UPI ID" aria-label="Search transactions" />
+          <select id="history-month" aria-label="Filter by month">
+            <option value="">All months</option>
+          </select>
+        </div>
+      </div>
+
       <div id="history-list" class="history"></div>
+    </section>
+
+    <!-- ============ NOTIFICATIONS ============ -->
+    <section id="screen-notifications" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Notifications</h2>
+      </header>
+      <div id="notif-list" class="notif-list"></div>
     </section>
 
     <!-- ============ PAYMENT SUCCESS / RECEIPT ============ -->

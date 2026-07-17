@@ -726,6 +726,52 @@ export function createStore({
     return { split: getSplit(splitId), transaction: txn };
   }
 
+  /* ---------------- Notifications (activity feed) ---------------- */
+
+  /**
+   * A recent-activity feed for an account: money received, incoming money
+   * requests still to pay, and split shares you still owe. Newest first.
+   */
+  function getNotifications(upiId) {
+    requireUser(upiId, 'user');
+    const items = [];
+
+    for (const t of getTransactions(upiId)) {
+      if (t.to === upiId && t.from !== upiId) {
+        const from = getUser(t.from);
+        items.push({
+          kind: 'received', id: t.id, amountPaise: t.amountPaise,
+          otherUpi: t.from, otherName: from ? from.holderName : t.from,
+          note: t.note, createdAt: t.createdAt,
+        });
+      }
+    }
+
+    for (const r of getRequestsForUser(upiId).incoming) {
+      if (r.status !== 'PENDING') continue;
+      const from = getUser(r.from);
+      items.push({
+        kind: 'request', id: r.id, amountPaise: r.amountPaise,
+        otherUpi: r.from, otherName: from ? from.holderName : r.from,
+        note: r.note, createdAt: r.createdAt,
+      });
+    }
+
+    for (const s of getSplitsForUser(upiId)) {
+      if (s.creator === upiId) continue;
+      const me = s.members.find((m) => m.upiId === upiId);
+      if (!me || me.status !== 'PENDING') continue;
+      const creator = getUser(s.creator);
+      items.push({
+        kind: 'split', id: s.id, amountPaise: me.sharePaise,
+        otherUpi: s.creator, otherName: creator ? creator.holderName : s.creator,
+        note: s.description, createdAt: s.createdAt,
+      });
+    }
+
+    return items.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
+  }
+
   function getTransactions(upiId) {
     return stmts.txnsForUser.all(upiId, upiId).map(toTxn);
   }
@@ -850,6 +896,7 @@ export function createStore({
     transfer, getTransactions, getInsights,
     getRewards, scratchCard,
     createSplit, getSplit, getSplitsForUser, paySplitShare,
+    getNotifications,
     createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
     db,
   };

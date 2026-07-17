@@ -395,6 +395,40 @@ test("a user's splits list includes ones they created and ones they're in", asyn
   assert.equal(priya.splits[0].youOweRupees, 300);
 });
 
+test('notifications surface received money, incoming requests and split shares owed', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  await claim(app, 'priya@hdfc');
+
+  // Ravi receives money from Priya.
+  await request(app).post('/pay').send({ from: 'priya@hdfc', to: 'ravi@hdfc', amount: 100, note: 'Tea', pin: PIN }).expect(201);
+  // Priya requests money from Ravi.
+  await request(app).post('/requests').send({ from: 'priya@hdfc', to: 'ravi@hdfc', amount: 40 }).expect(201);
+  // Priya creates a split that Ravi owes a share of.
+  await request(app).post('/splits').send({ creator: 'priya@hdfc', description: 'Lunch', total: 200, members: ['ravi@hdfc'] }).expect(201);
+
+  const { notifications } = (await request(app).get('/users/ravi@hdfc/notifications').expect(200)).body;
+  const kinds = notifications.map((n) => n.kind).sort();
+  assert.deepEqual(kinds, ['received', 'request', 'split']);
+  const received = notifications.find((n) => n.kind === 'received');
+  assert.equal(received.amountRupees, 100);
+  assert.equal(received.otherName, 'Priya Shah');
+  const split = notifications.find((n) => n.kind === 'split');
+  assert.equal(split.amountRupees, 100); // half of 200
+});
+
+test('a settled split share no longer appears in notifications', async () => {
+  const app = makeApp();
+  await claim(app, 'ravi@hdfc');
+  await claim(app, 'priya@hdfc');
+  const split = (await request(app).post('/splits').send({ creator: 'priya@hdfc', total: 200, members: ['ravi@hdfc'] }).expect(201)).body;
+  let notifs = (await request(app).get('/users/ravi@hdfc/notifications').expect(200)).body.notifications;
+  assert.equal(notifs.filter((n) => n.kind === 'split').length, 1);
+  await request(app).post(`/splits/${split.id}/pay`).send({ from: 'ravi@hdfc', pin: PIN }).expect(201);
+  notifs = (await request(app).get('/users/ravi@hdfc/notifications').expect(200)).body.notifications;
+  assert.equal(notifs.filter((n) => n.kind === 'split').length, 0);
+});
+
 test('QR endpoint returns a upi:// link and PNG for an account', async () => {
   const app = makeApp();
   const res = await request(app).get('/users/priya@hdfc/qr').query({ amount: 250, note: 'Lunch' }).expect(200);

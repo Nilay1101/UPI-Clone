@@ -68,11 +68,13 @@ banks/accounts:
    **receipt screen** (green tick, amount, payee, source account, transaction
    ID, date) with a **Share receipt** option.
 
-The home screen is **GPay-style**: a **search bar** (find a person by name or
-UPI ID, a biller by name or category, or just type any UPI ID to pay it), a
-**People** row (tap a contact to pay), quick actions (Scan & Pay, Pay UPI ID,
-Receive, Request, Split, Rewards, Insights, History), a **⚙️ Profile** button,
-and a **Bills & recharges** grid (mobile,
+The home screen is **GPay-style**: a **🔔 notifications** bell (a live badge
+of unread activity — money received, requests to pay, split shares you owe), a
+**search bar** (find a person by name or UPI ID, a biller by name or category,
+or just type any UPI ID to pay it), a **People** row (tap a contact to pay),
+quick actions (Scan & Pay, Pay UPI ID, Receive, Request, Split, Rewards,
+Insights, History), a **⚙️ Profile** button, and a **Bills & recharges** grid
+(mobile,
 electricity, DTH, water, gas). Each
 category lists **operators** (Airtel/Jio/Vi, …); you enter a consumer number,
 **fetch the bill** (a simulated amount due + due date + period), then pay it —
@@ -121,7 +123,8 @@ lock auto-expires.
 | POST   | `/users/:upiId/change-pin`    | Change the UPI PIN: `{ oldPin, newPin }` (current PIN required) |
 | GET    | `/users/:upiId`               | Fetch an account + balance                   |
 | GET    | `/users/:upiId/qr`            | Payment QR; optional `?amount=&note=`        |
-| GET    | `/users/:upiId/transactions`  | Transaction history                          |
+| GET    | `/users/:upiId/transactions`  | Transaction history (the web app filters it by direction / month / text) |
+| GET    | `/users/:upiId/notifications` | Activity feed: money received, requests to pay, split shares owed |
 | GET    | `/users/:upiId/insights`      | Spending insights: totals, by month, top payees |
 | GET    | `/users/:upiId/rewards`       | Scratch cards earned (reward hidden until scratched) |
 | POST   | `/rewards/:id/scratch`        | Scratch a card: reveal + credit the reward: `{ upiId }` |
