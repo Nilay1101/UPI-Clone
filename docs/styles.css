@@ -60,7 +60,6 @@ body {
   margin-bottom: 16px;
   box-shadow: 0 4px 18px rgba(20, 20, 50, 0.06);
 }
-.card.muted { background: #fbfbff; }
 .card h2 { margin: 0 0 14px; font-size: 16px; }
 
 /* ---------- Forms ---------- */
@@ -96,15 +95,6 @@ input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px 
 .balance-label { margin: 0; opacity: 0.85; font-size: 13px; }
 .balance-amount { margin: 4px 0 10px; font-size: 36px; font-weight: 700; letter-spacing: -1px; }
 
-.actions { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
-.action {
-  background: #fff; border: none; border-radius: 16px; padding: 18px 8px;
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  font-size: 13px; font-weight: 600; color: var(--ink); cursor: pointer;
-  box-shadow: 0 4px 14px rgba(20, 20, 50, 0.06);
-}
-.action:active { transform: scale(0.97); }
-.action-icon { font-size: 24px; }
 
 /* ---------- Sub screens ---------- */
 .sub-header { display: flex; align-items: center; gap: 8px; margin-bottom: 18px; }
@@ -118,7 +108,7 @@ input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px 
 .qr-card { text-align: center; }
 #qr-image { width: 220px; height: 220px; border-radius: 12px; }
 .qr-caption { color: var(--muted); font-size: 13px; margin: 10px 0 6px; }
-.upi-link, .upi-id code {
+.upi-link {
   display: block; word-break: break-all; font-size: 11px; color: var(--violet);
   background: #f4f4fb; padding: 8px 10px; border-radius: 8px;
 }
@@ -185,8 +175,6 @@ input:focus { outline: none; border-color: var(--violet); box-shadow: 0 0 0 3px 
 body { flex-direction: column; align-items: center; }
 
 /* ---------- Request-money (added for demo parity) ---------- */
-.actions { grid-template-columns: repeat(2, 1fr); }
-.action { position: relative; }
 .badge {
   position: absolute; top: 10px; right: 12px; min-width: 20px; height: 20px;
   padding: 0 6px; border-radius: 10px; background: var(--red); color: #fff;
@@ -216,10 +204,7 @@ body { flex-direction: column; align-items: center; }
 .acct-bank { font-weight: 700; font-size: 15px; }
 .acct-bal { font-weight: 700; font-size: 14px; color: var(--violet); white-space: nowrap; }
 .acct-sub { color: var(--muted); font-size: 12px; margin: 4px 0 0; word-break: break-all; }
-.acct-claim { display: flex; gap: 8px; margin-top: 12px; }
-.acct-claim input { margin-top: 0; }
 .acct .btn { margin-top: 12px; }
-.acct-claim .btn { margin-top: 0; white-space: nowrap; width: auto; padding-left: 16px; padding-right: 16px; }
 .home-bank { font-size: 12px; }
 
 /* ---------- Account chip / switcher (home) ---------- */

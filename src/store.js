@@ -234,10 +234,6 @@ export function createStore({
       `SELECT upi_id, holder_name, category FROM accounts
        WHERE kind = 'biller' AND (holder_name LIKE ? OR category LIKE ?) ORDER BY holder_name`,
     ),
-    insertAccount: db.prepare(
-      `INSERT INTO accounts (upi_id, bank_id, account_number, holder_name, phone, balance_paise, created_at)
-       VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    ),
     claim: db.prepare(
       `UPDATE accounts SET pin_hash = ?, claimed = 1, failed_pin_attempts = 0, locked_until = NULL WHERE upi_id = ?`,
     ),
@@ -510,18 +506,6 @@ export function createStore({
     return getUser(upiId);
   }
 
-  /** Test/helper: add an extra bank account (unclaimed). */
-  function addAccount({ upiId, bankId, accountNumber, holderName, phone, balancePaise = 0 }) {
-    if (!getBank(bankId)) throw new ApiError(400, `unknown bank '${bankId}'`);
-    if (!Number.isInteger(balancePaise) || balancePaise < 0) {
-      throw new ApiError(400, 'balance must be a non-negative amount');
-    }
-    stmts.insertAccount.run(
-      upiId, bankId, String(accountNumber), String(holderName), String(phone),
-      balancePaise, new Date().toISOString(),
-    );
-    return getUser(upiId);
-  }
 
   /* ---------------- PIN authorisation + lockout ---------------- */
 
@@ -853,10 +837,6 @@ export function createStore({
     return toRequest(stmts.getRequest.get(req.id));
   }
 
-  function getRequest(id) {
-    return toRequest(stmts.getRequest.get(id)) || null;
-  }
-
   function getRequestsForUser(upiId) {
     return {
       incoming: stmts.requestsIncoming.all(upiId).map(toRequest),
@@ -891,13 +871,13 @@ export function createStore({
   return {
     sendOtp, verifyOtp, sessionPhone,
     requestBankVerification, approveBankVerification, isBankApproved,
-    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, fetchBill, search, getUser, requireUser, claimAccount, addAccount,
+    getBanks, getBank, getAccountsByPhone, getContacts, getBillers, fetchBill, search, getUser, requireUser, claimAccount,
     changePin,
     transfer, getTransactions, getInsights,
     getRewards, scratchCard,
     createSplit, getSplit, getSplitsForUser, paySplitShare,
     getNotifications,
-    createRequest, getRequest, getRequestsForUser, approveRequest, declineRequest,
+    createRequest, getRequestsForUser, approveRequest, declineRequest,
     db,
   };
 }

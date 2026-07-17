@@ -1,29 +1,14 @@
 import QRCode from 'qrcode';
-import { randomInt } from 'node:crypto';
 
 /**
- * UPI helpers: virtual payment address (VPA / "UPI ID") generation, building
- * the standard `upi://pay` deep-link that gets encoded into a QR, and parsing
- * such a link back out after a scan.
+ * UPI helpers: building the standard `upi://pay` deep-link that gets encoded
+ * into a QR, and parsing such a link back out after a scan.
  *
  * The `upi://pay` scheme mirrors the real UPI spec so the QR codes we produce
  * are the same shape real apps use:
  *   pa = payee address (VPA)   pn = payee name
  *   am = amount (rupees)       cu = currency        tn = transaction note
  */
-
-export const HANDLE = 'upiclone';
-
-/** Generate a unique-ish VPA like `nilay4821@upiclone` from a display name. */
-export function generateUpiId(name) {
-  const slug =
-    String(name)
-      .toLowerCase()
-      .replace(/[^a-z0-9]/g, '')
-      .slice(0, 12) || 'user';
-  const suffix = randomInt(1000, 10000);
-  return `${slug}${suffix}@${HANDLE}`;
-}
 
 /** Build a `upi://pay?...` deep-link string. */
 export function buildUpiUri({ pa, pn, am, tn, cu = 'INR' }) {
