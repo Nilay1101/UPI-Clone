@@ -1,0 +1,54 @@
+name: Deploy demo to GitHub Pages
+
+# Publishes the docs/ demo. Uses the GitHub Actions deploy path (not "deploy
+# from a branch") so we can automatically retry GitHub's occasional transient
+# "Deployment failed, try again later" errors.
+
+on:
+  push:
+    branches:
+      - main
+      - claude/qr-code-payment-app-ojqoam
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# One Pages deployment at a time; never cancel an in-progress one (cancelling
+# is what produced the earlier "Deployment cancelled" failures).
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: docs
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url || steps.deploy-retry.outputs.page_url }}
+    steps:
+      - name: Deploy to GitHub Pages
+        id: deploy
+        continue-on-error: true
+        uses: actions/deploy-pages@v4
+
+      - name: Wait before retrying a transient failure
+        if: steps.deploy.outcome == 'failure'
+        run: sleep 45
+
+      - name: Deploy to GitHub Pages (retry)
+        id: deploy-retry
+        if: steps.deploy.outcome == 'failure'
+        uses: actions/deploy-pages@v4

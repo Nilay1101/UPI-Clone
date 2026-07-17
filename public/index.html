@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UPI-Clone</title>
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <div class="phone">
+    <!-- Toast / message banner -->
+    <div id="toast" class="toast" hidden></div>
+
+    <!-- ============ ONBOARDING ============ -->
+    <section id="screen-onboard" class="screen">
+      <!-- Step 1: enter mobile number -->
+      <div id="onboard-phone">
+        <header class="brand">
+          <div class="logo">₹</div>
+          <h1>UPI-Clone</h1>
+          <p class="tagline">Scan. Pay. Done. <span class="sim">(simulation)</span></p>
+        </header>
+
+        <div class="card">
+          <h2>Enter your mobile number</h2>
+          <form id="form-phone">
+            <div class="phone-row">
+              <select id="country-code" name="cc" class="cc-select" aria-label="Country">
+                <option value="+91">🇮🇳 +91</option>
+                <option value="+971">🇦🇪 +971</option>
+              </select>
+              <input name="phone" type="tel" inputmode="numeric" autocomplete="tel"
+                     placeholder="9810000001" required />
+            </div>
+            <button type="submit" class="btn primary">Continue</button>
+          </form>
+          <p class="demo-contacts">Demo: 🇮🇳 <code>9810000001</code> · <code>9820000002</code>
+            &nbsp;·&nbsp; 🇦🇪 <code>501234567</code> · <code>509876543</code></p>
+        </div>
+      </div>
+
+      <!-- Step 2: verify OTP -->
+      <div id="onboard-otp" hidden>
+        <header class="sub-header">
+          <button type="button" class="back" id="btn-otp-back">‹</button>
+          <h2>Verify your number</h2>
+        </header>
+        <div class="card">
+          <p class="onboard-num">We sent a code to <span id="otp-number">—</span></p>
+          <form id="form-otp">
+            <label>6-digit code
+              <input name="code" type="text" inputmode="numeric" autocomplete="one-time-code"
+                     maxlength="6" pattern="\d{6}" placeholder="••••••" required />
+            </label>
+            <button type="submit" class="btn primary">Verify</button>
+          </form>
+          <button type="button" class="link-btn resend" id="btn-resend">Resend code</button>
+          <p class="demo-contacts" id="otp-hint">—</p>
+        </div>
+      </div>
+
+      <!-- Step 3: choose an account -->
+      <div id="onboard-accounts" hidden>
+        <header class="sub-header">
+          <button type="button" class="back" id="btn-onboard-back">‹</button>
+          <h2>Choose an account</h2>
+        </header>
+        <p class="onboard-num">Accounts for <span id="onboard-number">—</span></p>
+        <div class="card">
+          <div id="account-list" class="accounts"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ BANK VERIFICATION ============ -->
+    <section id="screen-bankverify" class="screen" hidden>
+      <header class="sub-header">
+        <button type="button" class="back" id="btn-bankverify-back">‹</button>
+        <h2>Bank verification</h2>
+      </header>
+
+      <!-- Pending: waiting for approval in the bank app -->
+      <div id="bankverify-pending" class="card bankverify">
+        <div class="bv-icon">🏦</div>
+        <h2>Verifying with <span id="bv-bank">your bank</span></h2>
+        <p class="bv-text">We've sent a verification request to <span id="bv-bank2">your bank</span>.
+          Open your banking app and approve it to securely link this account.</p>
+        <div class="bv-waiting">Waiting for approval…</div>
+        <button class="btn primary" id="btn-bank-approve">Approve in bank app</button>
+        <p class="demo-contacts">In a real app you'd approve a notification inside your bank's
+          app. This button stands in for that.</p>
+      </div>
+
+      <!-- Approved: set the UPI PIN to finish -->
+      <div id="bankverify-approved" class="card" hidden>
+        <div class="bv-icon ok">✓</div>
+        <h2>Verified by <span id="bv-bank3">your bank</span></h2>
+        <p class="bv-text">Set a UPI PIN to finish linking <span id="bv-upi">—</span>.</p>
+        <form id="form-bank-pin">
+          <label>Set a payment PIN (4–6 digits)
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Set PIN &amp; activate</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ HOME ============ -->
+    <section id="screen-home" class="screen" hidden>
+      <header class="home-header">
+        <div>
+          <p class="greeting">Hi, <span id="home-name">—</span></p>
+          <p class="upi-id" id="home-upiid">—</p>
+        </div>
+        <div class="home-actions">
+          <button class="icon-btn" id="btn-notifications" aria-label="Notifications">🔔<span id="notif-badge" class="badge" hidden>0</span></button>
+          <button class="profile-btn" data-go="screen-profile" aria-label="Profile &amp; settings">⚙️</button>
+        </div>
+      </header>
+
+      <button class="search-bar" id="btn-search" type="button">
+        <span class="search-icon">🔍</span>
+        <span class="search-placeholder">Pay people, billers &amp; UPI IDs</span>
+      </button>
+
+      <div class="balance-card">
+        <p class="balance-label">Balance</p>
+        <p class="balance-amount">₹<span id="home-balance">0.00</span></p>
+        <button class="link-btn light" id="btn-refresh">Refresh</button>
+      </div>
+
+      <button class="acct-chip" id="btn-switch-account">
+        <span id="home-bank">—</span> <span class="chev">▾</span>
+      </button>
+
+      <div id="account-switcher" class="card" hidden>
+        <h2>Your bank accounts</h2>
+        <div id="switcher-list" class="accounts"></div>
+      </div>
+
+      <h3 class="section-title">People</h3>
+      <div id="people-row" class="people"></div>
+
+      <h3 class="section-title">Quick actions</h3>
+      <div class="quick">
+        <button class="quick-btn" data-go="screen-pay">
+          <span class="quick-icon">📷</span><span>Scan &amp; Pay</span>
+        </button>
+        <button class="quick-btn" id="btn-pay-upi">
+          <span class="quick-icon">🏷️</span><span>Pay UPI ID</span>
+        </button>
+        <button class="quick-btn" data-go="screen-receive">
+          <span class="quick-icon">📥</span><span>Receive</span>
+        </button>
+        <button class="quick-btn" data-go="screen-request">
+          <span class="quick-icon">🙋</span><span>Request</span>
+          <span id="req-badge" class="badge" hidden>0</span>
+        </button>
+        <button class="quick-btn" data-go="screen-splits">
+          <span class="quick-icon">👥</span><span>Split</span>
+        </button>
+        <button class="quick-btn" data-go="screen-rewards">
+          <span class="quick-icon">🎁</span><span>Rewards</span>
+        </button>
+        <button class="quick-btn" data-go="screen-insights">
+          <span class="quick-icon">📊</span><span>Insights</span>
+        </button>
+        <button class="quick-btn" data-go="screen-history">
+          <span class="quick-icon">🧾</span><span>History</span>
+        </button>
+      </div>
+
+      <h3 class="section-title">Bills &amp; recharges</h3>
+      <div id="bills-grid" class="bills"></div>
+    </section>
+
+    <!-- ============ SEARCH ============ -->
+    <section id="screen-search" class="screen" hidden>
+      <header class="sub-header search-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <div class="search-input-wrap">
+          <span class="search-icon">🔍</span>
+          <input id="search-input" type="search" autocomplete="off"
+                 placeholder="Pay people, billers & UPI IDs" aria-label="Search" />
+        </div>
+      </header>
+      <div id="search-results" class="search-results">
+        <p class="search-empty">Search for a person, a biller, or type a UPI ID like
+          <code>priya@hdfc</code>.</p>
+      </div>
+    </section>
+
+    <!-- ============ SELECT BILLER ============ -->
+    <section id="screen-billers" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2 id="billers-title">Select biller</h2>
+      </header>
+      <div id="biller-list" class="biller-list"></div>
+    </section>
+
+    <!-- ============ PAY A BILL ============ -->
+    <section id="screen-bill" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" id="btn-bill-back">‹</button>
+        <h2 id="bill-title">Pay bill</h2>
+      </header>
+
+      <div class="card">
+        <p class="onboard-num">Biller: <span id="bill-biller">—</span></p>
+        <form id="form-fetch-bill">
+          <label>Consumer / account number
+            <input name="consumer" placeholder="e.g. 9812345678" required />
+          </label>
+          <button type="submit" class="btn">Fetch bill</button>
+        </form>
+      </div>
+
+      <div id="bill-result" class="card" hidden>
+        <div class="bill-due">
+          <span class="bill-due-label">Amount due</span>
+          <span class="bill-due-amount">₹<span id="bill-due">0.00</span></span>
+        </div>
+        <p class="bill-meta">
+          <span id="bill-consumer">—</span> · Due <span id="bill-duedate">—</span> ·
+          <span id="bill-period">—</span>
+        </p>
+        <form id="form-bill">
+          <label>Pay from
+            <select name="from" id="bill-from"></select>
+          </label>
+          <label>Amount (₹)
+            <input name="amount" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Your payment PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Pay bill</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ RECEIVE / MY QR ============ -->
+    <section id="screen-receive" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Receive money</h2>
+      </header>
+
+      <div class="card">
+        <form id="form-qr">
+          <label>Amount (₹) <span class="optional">optional</span>
+            <input name="amount" type="number" min="0" step="0.01" placeholder="Any amount" />
+          </label>
+          <label>Note <span class="optional">optional</span>
+            <input name="note" placeholder="e.g. Dinner" />
+          </label>
+          <button type="submit" class="btn primary">Show my QR</button>
+        </form>
+      </div>
+
+      <div id="qr-result" class="card qr-card" hidden>
+        <img id="qr-image" alt="Payment QR code" />
+        <p class="qr-caption">Ask the payer to scan this</p>
+        <code id="qr-link" class="upi-link"></code>
+      </div>
+    </section>
+
+    <!-- ============ REQUESTS ============ -->
+    <section id="screen-request" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Requests</h2>
+      </header>
+
+      <div class="card">
+        <h2>Ask for money</h2>
+        <form id="form-request">
+          <label>Who should pay you? (their UPI ID)
+            <input name="to" placeholder="priya@hdfc" required />
+          </label>
+          <label>Amount (₹)
+            <input name="amount" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Note <span class="optional">optional</span>
+            <input name="note" placeholder="What's it for?" />
+          </label>
+          <button type="submit" class="btn primary">Send request</button>
+        </form>
+      </div>
+
+      <h3 class="section-title">Incoming — asking you to pay</h3>
+      <div id="requests-incoming" class="requests"></div>
+
+      <h3 class="section-title">Sent by you</h3>
+      <div id="requests-outgoing" class="requests"></div>
+    </section>
+
+    <!-- ============ PAY ============ -->
+    <section id="screen-pay" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Scan &amp; Pay</h2>
+      </header>
+
+      <div class="card">
+        <div id="scanner"></div>
+        <div class="scan-controls">
+          <button id="btn-scan-start" class="btn">Start camera</button>
+          <button id="btn-scan-stop" class="btn" hidden>Stop camera</button>
+        </div>
+        <p class="hint">No camera? Paste a UPI link or enter details below.</p>
+      </div>
+
+      <div class="card">
+        <h2>Payment details</h2>
+        <form id="form-pay">
+          <label>Pay from
+            <select name="from" id="pay-from"></select>
+          </label>
+          <label>Pay to (UPI ID or upi:// link)
+            <input name="to" placeholder="priya@hdfc" required />
+          </label>
+          <label>Amount (₹)
+            <input name="amount" type="number" min="0.01" step="0.01" required />
+          </label>
+          <label>Note <span class="optional">optional</span>
+            <input name="note" placeholder="What's it for?" />
+          </label>
+          <label>Your payment PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Pay now</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ HISTORY ============ -->
+    <section id="screen-history" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Transactions</h2>
+      </header>
+
+      <div class="history-filters">
+        <div class="chips" id="history-chips">
+          <button type="button" class="chip active" data-dir="all">All</button>
+          <button type="button" class="chip" data-dir="sent">Sent</button>
+          <button type="button" class="chip" data-dir="received">Received</button>
+        </div>
+        <div class="filter-row">
+          <input id="history-search" type="search" placeholder="Search notes or UPI ID" aria-label="Search transactions" />
+          <select id="history-month" aria-label="Filter by month">
+            <option value="">All months</option>
+          </select>
+        </div>
+      </div>
+
+      <div id="history-list" class="history"></div>
+    </section>
+
+    <!-- ============ NOTIFICATIONS ============ -->
+    <section id="screen-notifications" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Notifications</h2>
+      </header>
+      <div id="notif-list" class="notif-list"></div>
+    </section>
+
+    <!-- ============ PAYMENT SUCCESS / RECEIPT ============ -->
+    <section id="screen-success" class="screen" hidden>
+      <div class="receipt">
+        <div class="tick-wrap"><div class="tick">✓</div></div>
+        <p class="receipt-amount">₹<span id="rc-amount">0.00</span></p>
+        <p class="receipt-status" id="rc-status">Paid successfully</p>
+
+        <button class="reward-nudge" id="rc-reward" hidden>🎁 You earned a scratch card — tap to open</button>
+
+        <div class="receipt-card">
+          <div class="rc-row"><span class="rc-key">To</span><span id="rc-to">—</span></div>
+          <div class="rc-row"><span class="rc-key">From</span><span id="rc-from">—</span></div>
+          <div class="rc-row" id="rc-note-row"><span class="rc-key">Note</span><span id="rc-note">—</span></div>
+          <div class="rc-row"><span class="rc-key">Transaction ID</span><span id="rc-id" class="rc-mono">—</span></div>
+          <div class="rc-row"><span class="rc-key">Date &amp; time</span><span id="rc-date">—</span></div>
+        </div>
+
+        <div class="receipt-actions">
+          <button class="btn" id="btn-share-receipt">Share receipt</button>
+          <button class="btn primary" id="btn-receipt-done">Done</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PROFILE & SETTINGS ============ -->
+    <section id="screen-profile" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Profile &amp; settings</h2>
+      </header>
+
+      <div class="card profile-head">
+        <div class="profile-avatar" id="profile-avatar">—</div>
+        <div>
+          <p class="profile-name" id="profile-name">—</p>
+          <p class="profile-phone" id="profile-phone">—</p>
+        </div>
+      </div>
+
+      <h3 class="section-title">Active account</h3>
+      <div class="card">
+        <div class="rc-row"><span class="rc-key">Bank</span><span id="profile-bank">—</span></div>
+        <div class="rc-row"><span class="rc-key">UPI ID</span><span id="profile-upiid">—</span></div>
+        <div class="rc-row"><span class="rc-key">Balance</span><span id="profile-balance">—</span></div>
+      </div>
+
+      <h3 class="section-title">Change UPI PIN</h3>
+      <div class="card">
+        <form id="form-change-pin">
+          <label>Current PIN
+            <input name="oldPin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <label>New PIN (4–6 digits)
+            <input name="newPin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <label>Confirm new PIN
+            <input name="confirmPin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Update PIN</button>
+        </form>
+      </div>
+
+      <h3 class="section-title">Linked accounts</h3>
+      <div id="profile-accounts" class="accounts"></div>
+
+      <button class="btn danger full" id="btn-logout">Sign out</button>
+    </section>
+
+    <!-- ============ REWARDS (SCRATCH CARDS) ============ -->
+    <section id="screen-rewards" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Rewards</h2>
+      </header>
+      <p class="rewards-summary" id="rewards-summary">—</p>
+      <div id="rewards-grid" class="rewards-grid"></div>
+    </section>
+
+    <!-- ============ SPENDING INSIGHTS ============ -->
+    <section id="screen-insights" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Spending insights</h2>
+      </header>
+      <div class="insight-tiles">
+        <div class="insight-tile paid">
+          <span class="it-label">Paid</span><span class="it-value">₹<span id="ins-paid">0.00</span></span>
+        </div>
+        <div class="insight-tile recv">
+          <span class="it-label">Received</span><span class="it-value">₹<span id="ins-received">0.00</span></span>
+        </div>
+        <div class="insight-tile">
+          <span class="it-label">Payments</span><span class="it-value" id="ins-count">0</span>
+        </div>
+      </div>
+      <h3 class="section-title">By month</h3>
+      <div id="ins-months" class="ins-months"></div>
+      <h3 class="section-title">Top payees</h3>
+      <div id="ins-payees" class="ins-payees"></div>
+    </section>
+
+    <!-- ============ SPLIT BILLS (list) ============ -->
+    <section id="screen-splits" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-home">‹</button>
+        <h2>Split bills</h2>
+      </header>
+      <button class="btn primary full" id="btn-new-split">＋ New split</button>
+      <div id="splits-list" class="splits"></div>
+    </section>
+
+    <!-- ============ NEW SPLIT ============ -->
+    <section id="screen-split-new" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-splits">‹</button>
+        <h2>New split</h2>
+      </header>
+      <div class="card">
+        <form id="form-split">
+          <label>What's it for? <span class="optional">optional</span>
+            <input name="description" placeholder="e.g. Dinner, Cab, Trip" />
+          </label>
+          <label>Total amount (₹)
+            <input name="total" type="number" min="0.01" step="0.01" required />
+          </label>
+          <h3 class="section-title">Split with</h3>
+          <div id="split-members" class="split-picker"></div>
+          <p class="split-preview" id="split-preview">Select people and enter an amount.</p>
+          <button type="submit" class="btn primary">Create split</button>
+        </form>
+      </div>
+    </section>
+
+    <!-- ============ SPLIT DETAIL ============ -->
+    <section id="screen-split-detail" class="screen" hidden>
+      <header class="sub-header">
+        <button class="back" data-go="screen-splits">‹</button>
+        <h2>Split details</h2>
+      </header>
+      <div class="card split-head">
+        <p class="split-desc" id="sd-desc">—</p>
+        <p class="split-total">₹<span id="sd-total">0.00</span></p>
+        <p class="split-meta" id="sd-meta">—</p>
+      </div>
+      <div class="split-status-banner" id="sd-banner" hidden></div>
+      <h3 class="section-title">Members</h3>
+      <div id="sd-members" class="sd-members"></div>
+      <div id="sd-pay" class="card" hidden>
+        <p class="onboard-num">You owe <span id="sd-owe">₹0.00</span> to <span id="sd-creator">—</span></p>
+        <form id="form-split-pay">
+          <label>Your payment PIN
+            <input name="pin" type="password" inputmode="numeric" autocomplete="off"
+                   minlength="4" maxlength="6" pattern="\d{4,6}" placeholder="••••" required />
+          </label>
+          <button type="submit" class="btn primary">Pay your share</button>
+        </form>
+      </div>
+    </section>
+  </div>
+
+  <!-- QR scanning library (only needed on the Pay screen) -->
+  <script src="https://unpkg.com/html5-qrcode@2.3.8/html5-qrcode.min.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>
